@@ -3,10 +3,8 @@ import torch
 import sys
 from task import SwitchingBandit
 from torch.utils import tensorboard
-from torch.distributions import Categorical
 import os
-import torch.nn.functional as F
-from torch.nn.functional import logsigmoid
+from func_utils import compute_volatility, compute_emission
 
 def get_slope(data):
     """
@@ -73,8 +71,7 @@ class Worker(torch.nn.Module):
             for name, param in self.gru_emission.named_parameters():
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
-            torch.nn.init.xavier_uniform_(self.W_output_emission)
-                
+            torch.nn.init.xavier_uniform_(self.W_output_emission)                
         
         self.optimizer = torch.optim.RMSprop(
             [self.W_output_transition, self.W_output_emission] +  list(self.gru_transition.parameters()) + list(self.gru_emission.parameters()), 
@@ -89,19 +86,6 @@ class Worker(torch.nn.Module):
             num_trials: Number of parallel trials to run
             num_steps: Number of steps per sequence
         """
-
-        def compute_volatility(_rnn_state_transition, _W_output_transition, _return_exp=False):
-            logits_transition = torch.matmul(_rnn_state_transition, _W_output_transition).squeeze()
-            return (
-                logsigmoid(logits_transition).exp() if _return_exp 
-                else (logsigmoid(logits_transition), logsigmoid(-logits_transition))
-            )
-
-        def compute_emission(_rnn_state_emission, _W_output_emission):
-            logits_emission = torch.matmul(_rnn_state_emission, _W_output_emission)
-            _p_gen = torch.sigmoid(logits_emission)
-            return _p_gen / _p_gen.sum(dim=-1, keepdim=True)
-
         nb_tasks = self.env.n_tasks
         # Initialize RNN state
         rnn_state_transition = rnn_state_transition if rnn_state_transition is not None else self.initial_rnn_transition.tile(1, nb_tasks, 1)
@@ -168,8 +152,8 @@ class Worker(torch.nn.Module):
                 _, rnn_state_emission = self.gru_emission(input_state.T.unsqueeze(1), rnn_state_emission)
 
             # compute parameters            
-            params_transition[:, i_trial] = compute_volatility(rnn_state_transition, self.W_output_transition, _return_exp=True).detach()
-            params_emission[:, i_trial] = compute_emission(rnn_state_emission, self.W_output_emission).detach()
+            params_transition[:, i_trial] = compute_volatility(rnn_state_transition, self.W_output_transition, _return_exp=True)
+            params_emission[:, i_trial] = compute_emission(rnn_state_emission, self.W_output_emission)
             all_actions[:, i_trial] = selected_action
             all_rewards[:, i_trial] = reward
                 
@@ -264,7 +248,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 1
+        index = 12
 
     np.random.seed(index)
     torch.manual_seed(index)

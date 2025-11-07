@@ -3,11 +3,10 @@ import torch
 import sys
 from task import probabilistic_task
 from torch.utils import tensorboard
-from torch.distributions import Categorical
 import os
 from torch.nn.functional import logsigmoid
 import glob
-
+from func_utils import compute_emission, compute_association
 
 class Worker(torch.nn.Module):
     def __init__(
@@ -79,15 +78,7 @@ class Worker(torch.nn.Module):
         """
         if (not update_state) and rnn_state_association is None:
             raise ValueError("RNN state association must be provided if update_state is False")
-
-        def compute_emission(_rnn_state_emission, _W_output_emission):
-            logits_emission = torch.matmul(_rnn_state_emission, _W_output_emission)
-            _p_gen = torch.sigmoid(logits_emission)
-            return _p_gen / _p_gen.sum(dim=-1, keepdim=True)
-
-        def compute_association(_rnn_state_association, _W_output_association):
-            return torch.matmul(_rnn_state_association, _W_output_association).squeeze()
-
+        
         # process contexts
         contexts = self.env.context.to(torch.int64)
 
