@@ -110,7 +110,7 @@ class Worker(torch.nn.Module):
             log_predict_probs = torch.stack([
                 torch.logaddexp(log_alphas[:, 0] + log_1_minus_vol, log_alphas[:, 1] + logvol),
                 torch.logaddexp(log_alphas[:, 1] + log_1_minus_vol, log_alphas[:, 0] + logvol)
-            ]).squeeze().T
+            ]).squeeze().T # p(z_t , y_{1:(t-1)})
 
             if log_predict_probs.isnan().any() or rnn_state_transition.isnan().any() or self.W_output_transition.isnan().any():
                 import ipdb; ipdb.set_trace()
@@ -131,7 +131,7 @@ class Worker(torch.nn.Module):
             emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze().T
 
             # compute log alphas
-            log_alphas = emission_probs.log() + log_predict_probs
+            log_alphas = log_predict_probs + emission_probs.log() # p(z_t , y_{1:(t-1)}) * p(y_t | z_t) = p(z_t , y_{1:t})
 
             # Update RNN states
             if update_state:

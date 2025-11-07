@@ -105,7 +105,7 @@ class Worker(torch.nn.Module):
             logpredict = np.log(0.5) + torch.stack([
                 (logpredict_0[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1),
                 (logpredict_1[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1)
-            ]).squeeze().T # p(z_t) x p(c_t | z_t)
+            ]).squeeze().T # p(z_t) x p(c_t | z_t) = p(z_t, c_t
 
             # compute emission probabilities if needed
             if self.with_emission:
@@ -120,8 +120,8 @@ class Worker(torch.nn.Module):
                     emission_probs = torch.stack([1 - self.env.correct_weather[:, i_trial], self.env.correct_weather[:, i_trial]]).T
 
             # compute logalphas and logpredicts
-            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(z_t) x p(c_t | z_t) x p(y_t | z_t)
-            logpredicts[:, i_trial] = logpredict.detach() # p(z_t) x p(c_t | z_t)
+            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(z_t) x p(c_t | z_t) x p(y_t | z_t) = p(z_t, c_t, y_t)
+            logpredicts[:, i_trial] = logpredict.detach() # p(z_t) x p(c_t | z_t) = p(z_t, c_t)
 
             # update RNN state if needed
             if update_state:
