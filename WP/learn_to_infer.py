@@ -102,11 +102,10 @@ class Worker(torch.nn.Module):
             logpredict_0 = logsigmoid(-logits_association)
 
             # compute logpredicts
-            logpredict = torch.stack([
+            logpredict = np.log(0.5) + torch.stack([
                 (logpredict_0[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1),
                 (logpredict_1[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1)
-            ]).squeeze().T
-            logpredict = logpredict - logpredict.logsumexp(dim=-1, keepdims=True) # renormalize logpredicts
+            ]).squeeze().T # p(z_t) x p(c_t | z_t)
 
             # compute emission probabilities if needed
             if self.with_emission:
@@ -121,18 +120,17 @@ class Worker(torch.nn.Module):
                     emission_probs = torch.stack([1 - self.env.correct_weather[:, i_trial], self.env.correct_weather[:, i_trial]]).T
 
             # compute logalphas and logpredicts
-            logalphas[:, i_trial] = logpredict + emission_probs.log()
-            logpredicts[:, i_trial] = logpredict.detach()
+            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(z_t) x p(c_t | z_t) x p(y_t | z_t)
+            logpredicts[:, i_trial] = logpredict.detach() # p(z_t) x p(c_t | z_t)
 
             # update RNN state if needed
             if update_state:
                 # update association RNN state
                 if use_probabilitistic_reward:
-                    import ipdb; ipdb.set_trace()
-                    outcomes = self.env.probabilistic_rewards[0, :, i_trial]
+                    outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
                 elif self.with_emission:
-                    import ipdb; ipdb.set_trace()
-                    outcomes = (2 * torch.tensor([p_gen[:, i_k, k:].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])]) - 1)
+                    p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
+                    outcomes = 1 - 2 * torch.tensor([p_gen[:, i_k, :k].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])
                 else:
                     outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
                 input_state = torch.vstack(
@@ -172,8 +170,13 @@ class Worker(torch.nn.Module):
     def load_model(self, nb_episodes=None):
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
         model_dir = f"{self.model_path}/{self.model_name}"
-        model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"        
-        self.load_state_dict(torch.load(model_file))
+        model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"
+        state_dict = torch.load(model_file)
+        for (key, val) in self.named_parameters():
+            if 'association' in key:
+                with torch.no_grad():
+                    val[:] = state_dict[key]
+                print(f"loaded {key}")
 
     def train(self, num_trials=500, num_steps=3):
         """
@@ -253,13 +256,11 @@ if __name__ == "__main__":
         probabilistic_task(),
         "results/source/saved_models",
         "WP_GRU_id{0}".format(index),
+        with_emission=True,
     )
-    self.train(num_trials=500, num_steps=5)
+    self.load_model(nb_episodes=30000)
+    #self.train(num_trials=500, num_steps=5)
 
-    self.env.generate_test_task(num_tasks=5, num_trials=500, num_steps=8, probas=None, variable_length=False, tau=0)
-    result = self.evaluate()
+    self.env.generate_test_task(num_tasks=100, num_trials=500, num_steps=5, probas=None, variable_length=False, tau=None)
+    result = self.evaluate(use_probabilitistic_reward=True)
     print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
-    
-    #self.env.reset(num_trials=200, num_steps=8, reset_probas=False)
-    #test_result = self.evaluate(rnn_state=result['rnn_state'][:, None, 0])
-    #print(((test_result['logodds']).sign().detach() == (test_result['greedy'] * 2 - 1)).float().mean())
