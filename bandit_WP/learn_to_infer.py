@@ -77,7 +77,7 @@ class Worker(torch.nn.Module):
             logpredict_transition = torch.stack([
                 torch.logaddexp(log_alphas_transition[:, 0] + log_1_minus_vol, log_alphas_transition[:, 1] + logvol),
                 torch.logaddexp(log_alphas_transition[:, 1] + log_1_minus_vol, log_alphas_transition[:, 0] + logvol)
-            ]).squeeze().T
+            ]).squeeze().T # p(z_t , y_{1:(t-1)}) = \sum_s p(z_t | z_{t-1}=s) • p(z_{t-1}=s, y_{1:(t-1)})
             
             # renormalize log predicts
             if not KO_WP:
@@ -89,10 +89,11 @@ class Worker(torch.nn.Module):
                 logpredict_association = torch.stack([
                     (logpredict_0[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1),
                     (logpredict_1[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1)
-                ]).squeeze().T
+                ]).squeeze().T # p(c_t | z_t)
             
             logpredict_total = logpredict_transition if KO_WP else logpredict_association + logpredict_transition
-            
+            # p(z_t, c_t, y_{1:(t-1)}) = p(c_t | z_t) • \sum_s p(z_t | z_{t-1}=s) • p(z_{t-1}=s, y_{1:(t-1)})
+
             if logpredict_total.isnan().any() or rnn_state_association.isnan().any() or self.W_output_association.isnan().any() or self.W_output_transition.isnan().any() or self.W_output_emission.isnan().any():
                 import ipdb; ipdb.set_trace()
                 
@@ -111,6 +112,7 @@ class Worker(torch.nn.Module):
             emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze().T
 
             logalphas_total = emission_probs.log() + logpredict_total
+            # p(z_t, c_t, y_{1:t}) = p(y_t | z_t) • p(z_t, c_t, y_{1:(t-1)})
 
             # Update RNN state
             if update_state:

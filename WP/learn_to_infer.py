@@ -105,7 +105,7 @@ class Worker(torch.nn.Module):
             logpredict = np.log(0.5) + torch.stack([
                 (logpredict_0[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1),
                 (logpredict_1[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1)
-            ]).squeeze().T # p(z_t) x p(c_t | z_t) = p(z_t, c_t
+            ]).squeeze().T # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
 
             # compute emission probabilities if needed
             if self.with_emission:
@@ -120,17 +120,22 @@ class Worker(torch.nn.Module):
                     emission_probs = torch.stack([1 - self.env.correct_weather[:, i_trial], self.env.correct_weather[:, i_trial]]).T
 
             # compute logalphas and logpredicts
-            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(z_t) x p(c_t | z_t) x p(y_t | z_t) = p(z_t, c_t, y_t)
-            logpredicts[:, i_trial] = logpredict.detach() # p(z_t) x p(c_t | z_t) = p(z_t, c_t)
+            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(z_t, c_t, y_t) = p(z_t) • p(c_t | z_t) • p(y_t | z_t)
+            logpredicts[:, i_trial] = logpredict.detach() # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
 
             # update RNN state if needed
             if update_state:
                 # update association RNN state
                 if use_probabilitistic_reward:
-                    outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
+                    outcomes = -(self.env.probabilistic_rewards[0, :, i_trial] > 0).float() * 2 + 1
                 elif self.with_emission:
                     p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-                    outcomes = 1 - 2 * torch.tensor([p_gen[:, i_k, :k].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])
+                    p0 = torch.tensor([p_gen[:, i_k, :k].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])
+                    outcomes = - self.env.probabilistic_rewards[0, :, i_trial]
+                    #from scipy.stats import spearmanr, pearsonr
+                    #print(pearsonr(outcomes, self.env.correct_weather[:, i_trial]))
+                    #print(pearsonr(-self.env.probabilistic_rewards[0, :, i_trial], self.env.correct_weather[:, i_trial]))
+                    #import ipdb; ipdb.set_trace()
                 else:
                     outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
                 input_state = torch.vstack(
@@ -258,9 +263,12 @@ if __name__ == "__main__":
         "WP_GRU_id{0}".format(index),
         with_emission=True,
     )
-    self.load_model(nb_episodes=30000)
+    self.load_model()
     #self.train(num_trials=500, num_steps=5)
 
-    self.env.generate_test_task(num_tasks=100, num_trials=500, num_steps=5, probas=None, variable_length=False, tau=None)
+    self.env.generate_test_task(num_tasks=100, num_trials=1000, num_steps=10, probas=None, variable_length=False, tau=0.03)
     result = self.evaluate(use_probabilitistic_reward=True)
+    print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
+
+    result = self.evaluate(use_probabilitistic_reward=False)
     print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())

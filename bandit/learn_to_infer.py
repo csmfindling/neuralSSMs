@@ -56,7 +56,8 @@ class Worker(torch.nn.Module):
         self.initial_rnn_transition = torch.nn.Parameter(torch.zeros(1, 1, self.nb_units))
 
         # emission RNN
-        self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 101))
+        self.nb_emission_levels = 201
+        self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, self.nb_emission_levels))
         self.gru_emission = torch.nn.GRU(input_size=3, hidden_size=self.nb_units, batch_first=True, bias=True)
         self.initial_rnn_emission = torch.nn.Parameter(torch.zeros(1, 1, self.nb_units))
 
@@ -93,7 +94,7 @@ class Worker(torch.nn.Module):
 
         # pre-compute parameters
         params_transition = torch.zeros([self.env.n_tasks, self.env.n_trials])
-        params_emission = torch.zeros([self.env.n_tasks, self.env.n_trials, 101])
+        params_emission = torch.zeros([self.env.n_tasks, self.env.n_trials, self.nb_emission_levels])
         log_alphas = torch.ones([self.env.n_tasks, self.env.n_arms]) * np.log(0.5)
         all_actions = torch.zeros([self.env.n_tasks, self.env.n_trials])
         all_rewards = torch.zeros([self.env.n_tasks, self.env.n_trials])
@@ -110,7 +111,7 @@ class Worker(torch.nn.Module):
             log_predict_probs = torch.stack([
                 torch.logaddexp(log_alphas[:, 0] + log_1_minus_vol, log_alphas[:, 1] + logvol),
                 torch.logaddexp(log_alphas[:, 1] + log_1_minus_vol, log_alphas[:, 0] + logvol)
-            ]).squeeze().T # p(z_t , y_{1:(t-1)})
+            ]).squeeze().T # p(z_t , y_{1:(t-1)}) = \sum_s p(z_t | z_{t-1}=s) • p(z_{t-1}=s, y_{1:(t-1)})
 
             if log_predict_probs.isnan().any() or rnn_state_transition.isnan().any() or self.W_output_transition.isnan().any():
                 import ipdb; ipdb.set_trace()
@@ -131,7 +132,7 @@ class Worker(torch.nn.Module):
             emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze().T
 
             # compute log alphas
-            log_alphas = log_predict_probs + emission_probs.log() # p(z_t , y_{1:(t-1)}) * p(y_t | z_t) = p(z_t , y_{1:t})
+            log_alphas = log_predict_probs + emission_probs.log() # p(z_t , y_{1:t}) = p(z_t , y_{1:(t-1)}) • p(y_t | z_t)
 
             # Update RNN states
             if update_state:
@@ -248,7 +249,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 12
+        index = 4
 
     np.random.seed(index)
     torch.manual_seed(index)
