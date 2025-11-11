@@ -13,10 +13,18 @@ def volatility_distribution(lambda_param=5):
 
 def false_positive_rate_distribution(lambda_param=5):
     while True:
-        false_positive_rate = np.random.exponential(1./lambda_param) + 0.1
+        false_positive_rate = np.random.exponential(1./lambda_param) + 0.01
         if false_positive_rate < 0.4:
             break
     return false_positive_rate
+
+
+def mu_distribution(lambda_param=5):
+    while True:
+        mu = np.random.exponential(1./lambda_param) + 0.01
+        if mu < 1.0:
+            break
+    return mu
 
 def false_positive_rate(llrmax=None, return_stimulus_range=False):
     if llrmax is None:
@@ -43,7 +51,7 @@ def gaussian_false_positive_rate(mu=None, false_positive_feedback=None, return_s
     or just the probabilities.
     """
     if mu is None:
-        mu = (np.random.rand() * 0.9 + 0.1) * 100
+        mu = mu_distribution() #(np.random.rand() * 0.45 + 0.05)
     if false_positive_feedback is None:
         false_positive_feedback = false_positive_rate_distribution()
 
@@ -106,7 +114,7 @@ class SwitchingBandit:
         self.p_gen = np.zeros([nb_tasks, 201])
         self.mus = np.zeros([nb_tasks])
         self.false_positive_feedback = np.zeros([nb_tasks])
-        stimulus_range = np.round(np.arange(-100, 101, 1), 2)
+        stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
     
         for i in range(nb_tasks):
             self.nu[i] = volatility_distribution()

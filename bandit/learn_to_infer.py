@@ -249,7 +249,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 6
+        index = 10
 
     np.random.seed(index)
     torch.manual_seed(index)
