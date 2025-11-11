@@ -43,7 +43,7 @@ def gaussian_false_positive_rate(mu=None, false_positive_feedback=None, return_s
     or just the probabilities.
     """
     if mu is None:
-        mu = np.random.rand() * 0.9 + 0.1
+        mu = (np.random.rand() * 0.9 + 0.1) * 100
     if false_positive_feedback is None:
         false_positive_feedback = false_positive_rate_distribution()
 
@@ -106,7 +106,7 @@ class SwitchingBandit:
         self.p_gen = np.zeros([nb_tasks, 201])
         self.mus = np.zeros([nb_tasks])
         self.false_positive_feedback = np.zeros([nb_tasks])
-        stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
+        stimulus_range = np.round(np.arange(-100, 101, 1), 2)
     
         for i in range(nb_tasks):
             self.nu[i] = volatility_distribution()

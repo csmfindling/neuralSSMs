@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.preprocessing import OneHotEncoder
 import torch
-from bandit.task import false_positive_rate
+from bandit.task import false_positive_rate, false_positive_rate_distribution, gaussian_false_positive_rate
 
 
 class probabilistic_task:
@@ -29,9 +29,10 @@ class probabilistic_task:
         self.feedback_arm1 = np.zeros([num_tasks, num_trials], dtype=float)
         self.proba_emission_arm0 = torch.zeros([num_tasks, num_trials], dtype=float)
         self.proba_emission_arm1 = torch.zeros([num_tasks, num_trials], dtype=float)
-        self.p_gen = np.zeros([num_tasks, 101])
-        self.llrmaxs = np.zeros([num_tasks])
-        stimulus_range = np.round(np.arange(-1.0, 1.02, 0.02), 2)
+        self.p_gen = np.zeros([num_tasks, 201])
+        self.mus = np.zeros([num_tasks])
+        self.false_positive_feedback = np.zeros([num_tasks])
+        stimulus_range = np.round(np.arange(-100, 101, 1), 2)
 
         for i in range(num_tasks):
             if probas is None:
@@ -49,8 +50,8 @@ class probabilistic_task:
                         self.probas[i] = np.vstack([np.repeat(uniq_probas[k][None], nb_trials_per_block[k], axis=0) for k in range(len(uniq_probas))])
                 if taus[i] == 0 or len(switches) == 0:
                     uniq_probas = np.random.permutation(np.arange(2, 10, 2) * 0.1)
-                    self.probas[i] = np.repeat(uniq_probas[None], num_trials, axis=0)            
-            self.p_gen[i], self.llrmaxs[i] = false_positive_rate(llrmax=llrmax)
+                    self.probas[i] = np.repeat(uniq_probas[None], num_trials, axis=0)
+            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(mu=0.2)
             self.idx_arm0[i] = np.random.choice(np.arange(len(stimulus_range)), p=self.p_gen[i], size=[num_trials], replace=True)
             self.feedback_arm0[i] = stimulus_range[self.idx_arm0[i]]
             self.feedback_arm0[i][self.correct_arms[i].astype(bool)] *= -1

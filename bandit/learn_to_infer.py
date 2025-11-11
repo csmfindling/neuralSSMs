@@ -198,7 +198,7 @@ class Worker(torch.nn.Module):
             total_loss.backward()
             self.optimizer.step()
             
-            correct = (result['rewards'] == 1).float().mean()
+            correct = result['rewards'].float().mean()
 
             self.episode_rewards.append(correct)
 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 4
+        index = 6
 
     np.random.seed(index)
     torch.manual_seed(index)

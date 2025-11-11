@@ -36,10 +36,11 @@ class Worker(torch.nn.Module):
         if with_emission or train_with_emission:
             # initialize emission RNN
             self.gru_emission = torch.nn.GRU(input_size=3, hidden_size=self.nb_units, batch_first=True, bias=True)
-            self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 101))
+            self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
 
             # load emission model
-            model_id = int(model_name.split('id')[-1])        
+            model_id = int(model_name.split('id')[-1])
+            model_id = 6
             path_to_emission_networks = "../bandit/results/source/saved_models"
             name_of_emission_network = f"banditGRU_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
@@ -93,7 +94,7 @@ class Worker(torch.nn.Module):
         # initialize emission RNN state if needed
         if self.with_emission:
             rnn_state_emission = rnn_state_emission if rnn_state_emission is not None else torch.zeros(1, self.env.num_tasks, self.nb_units)
-            all_params_emission = torch.zeros([self.env.num_tasks, self.env.num_trials, 101])
+            all_params_emission = torch.zeros([self.env.num_tasks, self.env.num_trials, 201])
 
         for i_trial in range(self.env.num_trials):
             # compute association logits
@@ -127,15 +128,10 @@ class Worker(torch.nn.Module):
             if update_state:
                 # update association RNN state
                 if use_probabilitistic_reward:
-                    outcomes = -(self.env.probabilistic_rewards[0, :, i_trial] > 0).float() * 2 + 1
+                    outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
                 elif self.with_emission:
                     p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-                    p0 = torch.tensor([p_gen[:, i_k, :k].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])
-                    outcomes = - self.env.probabilistic_rewards[0, :, i_trial]
-                    #from scipy.stats import spearmanr, pearsonr
-                    #print(pearsonr(outcomes, self.env.correct_weather[:, i_trial]))
-                    #print(pearsonr(-self.env.probabilistic_rewards[0, :, i_trial], self.env.correct_weather[:, i_trial]))
-                    #import ipdb; ipdb.set_trace()
+                    outcomes = 1 - 2 * torch.tensor([p_gen[:, i_k, :k].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])
                 else:
                     outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
                 input_state = torch.vstack(
@@ -252,7 +248,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 1
+        index = 4
 
     np.random.seed(index)
     torch.manual_seed(index)
@@ -264,9 +260,8 @@ if __name__ == "__main__":
         with_emission=True,
     )
     self.load_model()
-    #self.train(num_trials=500, num_steps=5)
 
-    self.env.generate_test_task(num_tasks=100, num_trials=1000, num_steps=10, probas=None, variable_length=False, tau=0.03)
+    self.env.generate_test_task(num_tasks=100, num_trials=1000, num_steps=8, probas=None, variable_length=False, tau=0.01)
     result = self.evaluate(use_probabilitistic_reward=True)
     print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
 
