@@ -4,7 +4,7 @@ import torch
 from scipy.stats import truncnorm
 from scipy.optimize import brentq
 
-def volatility_distribution(lambda_param=5):
+def volatility_distribution(lambda_param=10):
     while True:
         nu = np.random.exponential(1./lambda_param)
         if nu < 0.4:
@@ -19,7 +19,7 @@ def false_positive_rate_distribution(lambda_param=5):
     return false_positive_rate
 
 
-def mu_distribution(lambda_param=5):
+def mu_distribution(lambda_param=3):
     while True:
         mu = np.random.exponential(1./lambda_param) + 0.01
         if mu < 1.0:
