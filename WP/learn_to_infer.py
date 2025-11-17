@@ -19,7 +19,7 @@ class Worker(torch.nn.Module):
         self.env = game
         self.episode_rewards = []
         self.init_type = init_type
-        self.episode_count_max = episode_count_max        
+        self.episode_count_max = episode_count_max
         self.train_with_emission = train_with_emission
         self.model_name = model_name + "_init_{0}_optim_{1}_episodeNbMax_{2}_numUnits_{3}_trainWithEmission_{4}".format(
             self.init_type, optimizer, int(self.episode_count_max), num_units, self.train_with_emission
@@ -28,7 +28,7 @@ class Worker(torch.nn.Module):
         self.nb_units = num_units
 
         # association RNN
-        self.W_output_association = torch.nn.Parameter(torch.zeros(self.nb_units, 4))            
+        self.W_output_association = torch.nn.Parameter(torch.zeros(self.nb_units, 4))
         self.gru_association = torch.nn.GRU(input_size=5, hidden_size=self.nb_units, batch_first=True, bias=True)
 
         # emission RNN
@@ -39,8 +39,8 @@ class Worker(torch.nn.Module):
             self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
 
             # load emission model
-            model_id = int(model_name.split('id')[-1])
-            model_id = 6
+            #model_id = int(model_name.split('id')[-1])
+            model_id = 10
             path_to_emission_networks = "../bandit/results/source/saved_models"
             name_of_emission_network = f"banditGRU_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
@@ -61,7 +61,7 @@ class Worker(torch.nn.Module):
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
             torch.nn.init.xavier_uniform_(self.W_output_association)
-        self.optimizer = torch.optim.RMSprop([self.W_output_association] + list(self.gru_association.parameters()), lr=1e-3)        
+        self.optimizer = torch.optim.RMSprop([self.W_output_association] + list(self.gru_association.parameters()), lr=1e-3)
 
     def evaluate(self, rnn_state_association=None, rnn_state_emission=None, update_state=True, use_probabilitistic_reward=False):
         """
@@ -109,7 +109,7 @@ class Worker(torch.nn.Module):
             ]).squeeze().T # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
 
             # compute emission probabilities if needed
-            if self.with_emission:
+            if self.with_emission and not use_probabilitistic_reward:
                 p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
                 proba_emission_arm0 = p_gen[:, torch.arange(self.env.num_tasks), self.env.idx_arm0[:, i_trial]]
                 proba_emission_arm1 = p_gen[:, torch.arange(self.env.num_tasks), self.env.idx_arm1[:, i_trial]]
@@ -126,22 +126,6 @@ class Worker(torch.nn.Module):
 
             # update RNN state if needed
             if update_state:
-                # update association RNN state
-                if use_probabilitistic_reward:
-                    outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
-                elif self.with_emission:
-                    p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-                    outcomes = 1 - 2 * torch.tensor([p_gen[:, i_k, :k].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])
-                else:
-                    outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
-                input_state = torch.vstack(
-                    (
-                        torch.vstack([outcomes]), 
-                        torch.vstack([(contexts[:, i_trial] == k).sum(dim=1) for k in range(4)])
-                    )
-                ).float()
-                _, rnn_state_association = self.gru_association(input_state.T.unsqueeze(1), rnn_state_association)
-
                 # update emission RNN state if needed
                 if self.with_emission:
                     log_pfiltering = logalphas[:, i_trial] - torch.logsumexp(logalphas[:, i_trial], dim=-1, keepdims=True)
@@ -152,6 +136,22 @@ class Worker(torch.nn.Module):
                         )
                     ).float().detach()
                     _, rnn_state_emission = self.gru_emission(input_state.T.unsqueeze(1), rnn_state_emission)
+                
+                # update association RNN state
+                if use_probabilitistic_reward:
+                    outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
+                elif self.with_emission:
+                    p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
+                    outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])]))
+                else:
+                    outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
+                input_state = torch.vstack(
+                    (
+                        torch.vstack([outcomes]), 
+                        torch.vstack([(contexts[:, i_trial] == k).sum(dim=1) for k in range(4)])
+                    )
+                ).float()
+                _, rnn_state_association = self.gru_association(input_state.T.unsqueeze(1), rnn_state_association)
 
             all_probas_association[:, i_trial] = torch.sigmoid(compute_association(rnn_state_association, self.W_output_association)).squeeze().detach()
             if self.with_emission:
@@ -248,7 +248,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 4
+        index = 31
 
     np.random.seed(index)
     torch.manual_seed(index)
@@ -261,7 +261,7 @@ if __name__ == "__main__":
     )
     self.load_model()
 
-    self.env.generate_test_task(num_tasks=100, num_trials=1000, num_steps=8, probas=None, variable_length=False, tau=0.01)
+    self.env.generate_test_task(num_tasks=500, num_trials=500, num_steps=5, probas=None, variable_length=True, tau=0.01)
     result = self.evaluate(use_probabilitistic_reward=True)
     print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
 

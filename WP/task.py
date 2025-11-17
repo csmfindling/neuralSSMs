@@ -32,7 +32,7 @@ class probabilistic_task:
         self.p_gen = np.zeros([num_tasks, 201])
         self.mus = np.zeros([num_tasks])
         self.false_positive_feedback = np.zeros([num_tasks])
-        stimulus_range = np.round(np.arange(-100, 101, 1), 2)
+        stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
 
         for i in range(num_tasks):
             if probas is None:
@@ -46,12 +46,12 @@ class probabilistic_task:
                         if switches[-1] != num_trials:
                             switches = np.concatenate((switches, [num_trials]))
                         uniq_probas = np.array([np.random.permutation(np.arange(2, 10, 2) * 0.1) for _ in range(len(switches))])
-                        nb_trials_per_block = np.concatenate((switches[:1], switches[1:] - switches[:-1]))     
+                        nb_trials_per_block = np.concatenate((switches[:1], switches[1:] - switches[:-1]))
                         self.probas[i] = np.vstack([np.repeat(uniq_probas[k][None], nb_trials_per_block[k], axis=0) for k in range(len(uniq_probas))])
                 if taus[i] == 0 or len(switches) == 0:
                     uniq_probas = np.random.permutation(np.arange(2, 10, 2) * 0.1)
                     self.probas[i] = np.repeat(uniq_probas[None], num_trials, axis=0)
-            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(mu=0.2)
+            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate()
             self.idx_arm0[i] = np.random.choice(np.arange(len(stimulus_range)), p=self.p_gen[i], size=[num_trials], replace=True)
             self.feedback_arm0[i] = stimulus_range[self.idx_arm0[i]]
             self.feedback_arm0[i][self.correct_arms[i].astype(bool)] *= -1
@@ -73,6 +73,7 @@ class probabilistic_task:
         )
         
         if variable_length:
+            # sparse=False on server
             one_hot_array = OneHotEncoder(max_categories=num_steps - 1, sparse_output=False).fit_transform(
                 np.random.randint(num_steps - 1, size=num_tasks_reshaped)[:, None]
             )
