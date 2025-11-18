@@ -258,12 +258,14 @@ if __name__ == "__main__":
         "results/source/saved_models",
         "WP_GRU_id{0}".format(index),
         with_emission=True,
+        train_with_emission=True,
     )
-    self.load_model()
+    self.train()
+    #self.load_model()
 
-    self.env.generate_test_task(num_tasks=500, num_trials=500, num_steps=5, probas=None, variable_length=True, tau=0.01)
-    result = self.evaluate(use_probabilitistic_reward=True)
-    print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
+    #self.env.generate_test_task(num_tasks=500, num_trials=500, num_steps=5, probas=None, variable_length=True, tau=0.01)
+    #result = self.evaluate(use_probabilitistic_reward=True)
+    #print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
 
-    result = self.evaluate(use_probabilitistic_reward=False)
-    print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
+    #result = self.evaluate(use_probabilitistic_reward=False)
+    #print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
