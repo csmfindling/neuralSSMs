@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.preprocessing import OneHotEncoder
 import torch
-from bandit.task import false_positive_rate, false_positive_rate_distribution, gaussian_false_positive_rate
+from bandit.task import gaussian_false_positive_rate
 
 
 class probabilistic_task:
@@ -12,7 +12,7 @@ class probabilistic_task:
         self.probabilistic_rewards = None
         self.num_trials = None
 
-    def generate_test_task(self, num_tasks=100, num_trials=200, num_steps=5, cues=np.arange(0, 4), probas=None, variable_length=False, tau=None, llrmax=None):
+    def generate_test_task(self, num_tasks=100, num_trials=200, num_steps=5, cues=np.arange(0, 4), probas=None, variable_length=False, tau=None):
         if probas is None:
             if tau is None:
                 taus = np.random.choice([0.0, 0.01, 0.03, 0.06, 0.1], size=num_tasks)

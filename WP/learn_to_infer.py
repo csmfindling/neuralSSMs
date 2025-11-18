@@ -39,8 +39,7 @@ class Worker(torch.nn.Module):
             self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
 
             # load emission model
-            #model_id = int(model_name.split('id')[-1])
-            model_id = 10
+            model_id = int(model_name.split('id')[-1])
             path_to_emission_networks = "../bandit/results/source/saved_models"
             name_of_emission_network = f"banditGRU_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
@@ -142,7 +141,7 @@ class Worker(torch.nn.Module):
                     outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
                 elif self.with_emission:
                     p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-                    outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])]))
+                    outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
                 else:
                     outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
                 input_state = torch.vstack(
