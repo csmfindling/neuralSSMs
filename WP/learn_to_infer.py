@@ -60,7 +60,7 @@ class Worker(torch.nn.Module):
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
             torch.nn.init.xavier_uniform_(self.W_output_association)
-        self.optimizer = torch.optim.RMSprop([self.W_output_association] + list(self.gru_association.parameters()), lr=1e-3)
+        self.optimizer = torch.optim.RMSprop([self.W_output_association] + list(self.gru_association.parameters()), lr=1e-3 if not train_with_emission else 1e-4)
 
     def evaluate(self, rnn_state_association=None, rnn_state_emission=None, update_state=True, use_probabilitistic_reward=False):
         """
@@ -112,7 +112,7 @@ class Worker(torch.nn.Module):
                 p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
                 proba_emission_arm0 = p_gen[:, torch.arange(self.env.num_tasks), self.env.idx_arm0[:, i_trial]]
                 proba_emission_arm1 = p_gen[:, torch.arange(self.env.num_tasks), self.env.idx_arm1[:, i_trial]]
-                emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze().T                
+                emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze().T
             else:
                 if use_probabilitistic_reward:
                     emission_probs = torch.zeros([self.env.num_tasks, 2])
@@ -121,13 +121,13 @@ class Worker(torch.nn.Module):
 
             # compute logalphas and logpredicts
             logalphas[:, i_trial] = logpredict + emission_probs.log() # p(z_t, c_t, y_t) = p(z_t) • p(c_t | z_t) • p(y_t | z_t)
-            logpredicts[:, i_trial] = logpredict.detach() # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
+            logpredicts[:, i_trial] = logpredict # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
 
             # update RNN state if needed
             if update_state:
                 # update emission RNN state if needed
                 if self.with_emission:
-                    log_pfiltering = logalphas[:, i_trial] - torch.logsumexp(logalphas[:, i_trial], dim=-1, keepdims=True)
+                    log_pfiltering = (logalphas[:, i_trial] - torch.logsumexp(logalphas[:, i_trial], dim=-1, keepdims=True))
                     input_state = torch.vstack(
                         (
                             log_pfiltering.T,
@@ -167,16 +167,22 @@ class Worker(torch.nn.Module):
             "logpredicts": logpredicts,
         }
 
-    def load_model(self, nb_episodes=None):
+    def load_model(self, nb_episodes=None, trained_with_emission=None):
+        if trained_with_emission is None:
+            trained_with_emission = self.train_with_emission
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
-        model_dir = f"{self.model_path}/{self.model_name}"
+        model_dir = f"{self.model_path}/{self.model_name}".replace('_debug', "").replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
         model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"
         state_dict = torch.load(model_file)
+        print(f"loading model {model_file}")
         for (key, val) in self.named_parameters():
             if 'association' in key:
                 with torch.no_grad():
                     val[:] = state_dict[key]
                 print(f"loaded {key}")
+            else:
+                print(f"not loaded {key}")
+        print(f"loaded model {model_file}")
 
     def train(self, num_trials=500, num_steps=3):
         """
@@ -210,7 +216,7 @@ class Worker(torch.nn.Module):
             if episode_count % 10 == 0 and episode_count != 0:
                 
                 # Save model checkpoint
-                if episode_count % 500 == 0:
+                if episode_count % 500 == 0 and False:
                     model_dir = f"{self.model_path}/{self.model_name}"
                     os.makedirs(model_dir, exist_ok=True)
                     model_file = f"{model_dir}/model-{episode_count}.pth"
@@ -238,6 +244,12 @@ class Worker(torch.nn.Module):
                     episode_count
                 )
 
+                self.summary_writer.add_scalar(
+                    "Train/W_output_association_norm",
+                    float(self.W_output_association.norm().detach().cpu().numpy()),
+                    episode_count
+                )
+
                 self.summary_writer.flush()
             
             episode_count += 1
@@ -247,7 +259,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 31
+        index = 2
 
     np.random.seed(index)
     torch.manual_seed(index)
@@ -255,16 +267,9 @@ if __name__ == "__main__":
     self = Worker(
         probabilistic_task(),
         "results/source/saved_models",
-        "WP_GRU_id{0}".format(index),
+        "WP_GRU_debug_id{0}".format(index),
         with_emission=True,
-        train_with_emission=True,
+        train_with_emission=True
     )
+    self.load_model(trained_with_emission=False)
     self.train()
-    #self.load_model()
-
-    #self.env.generate_test_task(num_tasks=500, num_trials=500, num_steps=5, probas=None, variable_length=True, tau=0.01)
-    #result = self.evaluate(use_probabilitistic_reward=True)
-    #print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
-
-    #result = self.evaluate(use_probabilitistic_reward=False)
-    #print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
