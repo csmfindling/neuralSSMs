@@ -280,17 +280,6 @@ if __name__ == "__main__":
         with_emission=True,
         #train_with_emission=True
     )
-    #self.load_model(trained_with_emission=False)
-    self.load_model()
-    #self.train()
-
-    ffs = [0.05] * 50 + [0.3] * 50
-    self.env.generate_test_task(num_tasks=100, num_trials=200, num_steps=5, probas=None, variable_length=False, tau=0.0, ffs=ffs, mus=[0.3] * 100)
-    result = self.evaluate()
-    print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
-    estimated_false_positive_rate = result['params_emission'][:, -1, :100].sum(axis=-1)
-    print(estimated_false_positive_rate[:50].mean())
-    print(estimated_false_positive_rate[50:].mean())
-
-    #result = self.evaluate(use_probabilitistic_reward=True)
-    #print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
+    
+    self.load_model(trained_with_emission=False)
+    self.train()
