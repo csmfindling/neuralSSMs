@@ -11,7 +11,7 @@ def volatility_distribution(lambda_param=10):
             break
     return nu
 
-def false_positive_rate_distribution(lambda_param=5):
+def false_positive_rate_distribution(lambda_param=2):
     while True:
         false_positive_rate = np.random.exponential(1./lambda_param) + 0.01
         if false_positive_rate < 0.4:
@@ -100,7 +100,7 @@ class SwitchingBandit:
         self.trial = None
         self.reset(nb_tasks)
 
-    def _generate_task_schedule(self, nb_tasks=100):
+    def _generate_task_schedule(self, nb_tasks=100, nus=None, ffs=None, mus=None):
         # 1. Generate the drifting switch probability 'nu'
         self.nu = np.zeros([nb_tasks, self.n_trials])
         # 2. Generate the sequence of correct arms
@@ -117,7 +117,7 @@ class SwitchingBandit:
         stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
     
         for i in range(nb_tasks):
-            self.nu[i] = volatility_distribution()
+            self.nu[i] = nus[i] if nus is not None else volatility_distribution()
             self.correct_arms[i, 0] = np.random.randint(self.n_arms)
 
             for t in range(1, self.n_trials):
@@ -128,7 +128,10 @@ class SwitchingBandit:
                 else:  # No switch
                     self.correct_arms[i, t] = self.correct_arms[i, t-1]
 
-            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate()
+            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(
+                false_positive_feedback=ffs[i] if ffs is not None else None,
+                mu=mus[i] if mus is not None else None
+            )
             self.idx_arm0[i] = np.random.choice(np.arange(len(stimulus_range)), p=self.p_gen[i], size=[self.n_trials], replace=True)
             self.feedback_arm0[i] = stimulus_range[self.idx_arm0[i]]
             self.feedback_arm0[i][self.correct_arms[i].astype(bool)] *= -1
@@ -141,9 +144,9 @@ class SwitchingBandit:
             self.proba_emission_arm1[i] = torch.from_numpy(self.p_gen[i][self.idx_arm1[i]])
 
 
-    def reset(self, nb_tasks):
+    def reset(self, nb_tasks, nus=None, ffs=None, mus=None):
         self.n_tasks = nb_tasks
-        self._generate_task_schedule(nb_tasks)
+        self._generate_task_schedule(nb_tasks, nus, ffs, mus)
         self.trial = 0
 
     def pullArm(self, arm_index):
