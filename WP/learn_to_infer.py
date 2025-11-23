@@ -34,12 +34,14 @@ class Worker(torch.nn.Module):
         # emission RNN
         self.with_emission = with_emission
         if with_emission or train_with_emission:
+            # load emission model
+            model_id = 121
+            #model_id = int(model_name.split('id')[-1])
+
             # initialize emission RNN
-            self.gru_emission = torch.nn.GRU(input_size=3, hidden_size=self.nb_units, batch_first=True, bias=True)
+            self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
             self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
 
-            # load emission model
-            model_id = int(model_name.split('id')[-1])
             path_to_emission_networks = "../bandit/results/source/saved_models"
             name_of_emission_network = f"banditGRU_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
@@ -95,6 +97,7 @@ class Worker(torch.nn.Module):
             rnn_state_emission = rnn_state_emission if rnn_state_emission is not None else torch.zeros(1, self.env.num_tasks, self.nb_units)
             all_params_emission = torch.zeros([self.env.num_tasks, self.env.num_trials, 201])
 
+        debug_pfiltering = []
         for i_trial in range(self.env.num_trials):
             # compute association logits
             logits_association = compute_association(rnn_state_association, self.W_output_association)
@@ -126,16 +129,21 @@ class Worker(torch.nn.Module):
             # update RNN state if needed
             if update_state:
                 # update emission RNN state if needed
-                if self.with_emission:
-                    log_pfiltering = (logalphas[:, i_trial] - torch.logsumexp(logalphas[:, i_trial], dim=-1, keepdims=True))
+                if self.with_emission and (not use_probabilitistic_reward):
+                    # update emission RNN state
+                    pfiltering = (logalphas[:, i_trial] - torch.logsumexp(logalphas[:, i_trial], dim=-1, keepdims=True))
+                    selected_pfiltering = (
+                        (pfiltering[:, 0] == pfiltering[:, 1]) * torch.randint(high=2, size=(self.env.num_tasks,)) + 
+                        (pfiltering[:, 0] != pfiltering[:, 1]) * pfiltering.argmax(dim=1)
+                    )            
                     input_state = torch.vstack(
                         (
-                            log_pfiltering.T,
-                            torch.from_numpy(self.env.feedback_arm0[:, i_trial]).unsqueeze(0),
+                            pfiltering[torch.arange(self.env.num_tasks), selected_pfiltering].unsqueeze(-1).T.exp(),
+                            torch.from_numpy(self.env.feedback_arm0[:, i_trial]).unsqueeze(0) * (1 - 2 * selected_pfiltering),
                         )
                     ).float().detach()
                     _, rnn_state_emission = self.gru_emission(input_state.T.unsqueeze(1), rnn_state_emission)
-                
+
                 # update association RNN state
                 if use_probabilitistic_reward:
                     outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
@@ -144,6 +152,7 @@ class Worker(torch.nn.Module):
                     outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
                 else:
                     outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
+
                 input_state = torch.vstack(
                     (
                         torch.vstack([outcomes]), 
@@ -259,7 +268,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 2
+        index = 5
 
     np.random.seed(index)
     torch.manual_seed(index)
@@ -269,14 +278,19 @@ if __name__ == "__main__":
         "results/source/saved_models",
         "WP_GRU_debug_id{0}".format(index),
         with_emission=True,
-        train_with_emission=True
+        #train_with_emission=True
     )
-    self.load_model(trained_with_emission=False)
-    self.train()
+    #self.load_model(trained_with_emission=False)
+    self.load_model()
+    #self.train()
 
-    self.env.generate_test_task(num_tasks=500, num_trials=500, num_steps=5, probas=None, variable_length=True, tau=0.01)
-    result = self.evaluate(use_probabilitistic_reward=True)
+    ffs = [0.05] * 50 + [0.3] * 50
+    self.env.generate_test_task(num_tasks=100, num_trials=200, num_steps=5, probas=None, variable_length=False, tau=0.0, ffs=ffs, mus=[0.3] * 100)
+    result = self.evaluate()
     print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
+    estimated_false_positive_rate = result['params_emission'][:, -1, :100].sum(axis=-1)
+    print(estimated_false_positive_rate[:50].mean())
+    print(estimated_false_positive_rate[50:].mean())
 
-    result = self.evaluate(use_probabilitistic_reward=False)
-    print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())
+    #result = self.evaluate(use_probabilitistic_reward=True)
+    #print((result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean())

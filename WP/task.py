@@ -12,7 +12,7 @@ class probabilistic_task:
         self.probabilistic_rewards = None
         self.num_trials = None
 
-    def generate_test_task(self, num_tasks=100, num_trials=200, num_steps=5, cues=np.arange(0, 4), probas=None, variable_length=False, tau=None):
+    def generate_test_task(self, num_tasks=100, num_trials=200, num_steps=5, cues=np.arange(0, 4), probas=None, variable_length=False, tau=None, mus=None, ffs=None):
         if probas is None:
             if tau is None:
                 taus = np.random.choice([0.0, 0.01, 0.03, 0.06, 0.1], size=num_tasks)
@@ -51,7 +51,10 @@ class probabilistic_task:
                 if taus[i] == 0 or len(switches) == 0:
                     uniq_probas = np.random.permutation(np.arange(2, 10, 2) * 0.1)
                     self.probas[i] = np.repeat(uniq_probas[None], num_trials, axis=0)
-            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate()
+            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(
+                false_positive_feedback=ffs[i] if ffs is not None else None,
+                mu=mus[i] if mus is not None else None
+            )
             self.idx_arm0[i] = np.random.choice(np.arange(len(stimulus_range)), p=self.p_gen[i], size=[num_trials], replace=True)
             self.feedback_arm0[i] = stimulus_range[self.idx_arm0[i]]
             self.feedback_arm0[i][self.correct_arms[i].astype(bool)] *= -1
