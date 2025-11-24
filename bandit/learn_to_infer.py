@@ -53,7 +53,7 @@ class Worker(torch.nn.Module):
         else:
             self.gru_transition = torch.nn.GRU(input_size=1, hidden_size=self.nb_units, batch_first=True, bias=True)
         self.W_output_transition = torch.nn.Parameter(torch.zeros(self.nb_units, 1))
-        self.initial_rnn_transition = torch.nn.Parameter(torch.zeros(1, 1, self.nb_units))
+        self.initial_rnn_transition = torch.nn.Parameter(torch.ones(1, 1, self.nb_units) * -1.)
 
         # emission RNN
         self.nb_emission_levels = 201
@@ -66,7 +66,7 @@ class Worker(torch.nn.Module):
             for name, param in self.gru_transition.named_parameters():
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
-            torch.nn.init.xavier_uniform_(self.W_output_transition)
+            self.W_output_transition[:] = .1
 
             # emission RNN
             for name, param in self.gru_emission.named_parameters():
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 201
+        index = 22
 
     np.random.seed(index)
     torch.manual_seed(index)
@@ -273,12 +273,12 @@ if __name__ == "__main__":
         "results/source/saved_models",
         "banditGRU_id{0}".format(index),
     )
-    self.load_model(nb_episodes=7000)
-    #self.train()
-    ffs = [0.05] * 50 + [0.3] * 50
-    self.env.reset(nb_tasks=100, ffs=ffs, nus=[0.0] * 100, mus=[0.3] * 100)
+    #self.load_model(nb_episodes=20000)
+    self.train()
+    ffs = [0.1] * 500 + [0.3] * 500
+    self.env.reset(nb_tasks=1000, ffs=ffs, nus=[0.07] * 1000) #, mus=[0.1] * 1000)
     result = self.evaluate(use_ground_truth=False)
     estimated_false_positive_rate = result['params_emission'][:, -1, :101].sum(axis=-1)
-    print(estimated_false_positive_rate[:50].mean())
-    print(estimated_false_positive_rate[50:].mean())
+    print(estimated_false_positive_rate[:500].mean())
+    print(estimated_false_positive_rate[500:].mean())
 
