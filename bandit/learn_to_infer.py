@@ -53,7 +53,7 @@ class Worker(torch.nn.Module):
         else:
             self.gru_transition = torch.nn.GRU(input_size=1, hidden_size=self.nb_units, batch_first=True, bias=True)
         self.W_output_transition = torch.nn.Parameter(torch.zeros(self.nb_units, 1))
-        self.initial_rnn_transition = torch.nn.Parameter(torch.ones(1, 1, self.nb_units) * -1.)
+        self.initial_rnn_transition = torch.nn.Parameter(torch.ones(1, 1, self.nb_units) * -1)
 
         # emission RNN
         self.nb_emission_levels = 201
@@ -66,7 +66,7 @@ class Worker(torch.nn.Module):
             for name, param in self.gru_transition.named_parameters():
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
-            self.W_output_transition[:] = .1
+            self.W_output_transition[:] = 1 # make this a positive number so that volatility at time 0 is null
 
             # emission RNN
             for name, param in self.gru_emission.named_parameters():
@@ -263,7 +263,10 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 22
+        index = 23
+
+    # 210 -> -4.6
+    # 22 -> -1
 
     np.random.seed(index)
     torch.manual_seed(index)
@@ -271,12 +274,12 @@ if __name__ == "__main__":
     self = Worker(
         SwitchingBandit(n_trials=200),
         "results/source/saved_models",
-        "banditGRU_id{0}".format(index),
+        "banditGRU_newinit_id{0}".format(index),
     )
-    #self.load_model(nb_episodes=20000)
-    self.train()
-    ffs = [0.1] * 500 + [0.3] * 500
-    self.env.reset(nb_tasks=1000, ffs=ffs, nus=[0.07] * 1000) #, mus=[0.1] * 1000)
+    self.load_model(nb_episodes=40000)
+    #self.train()
+    ffs = [0.05] * 500 + [0.3] * 500
+    self.env.reset(nb_tasks=1000, ffs=ffs) #, mus=[0.1] * 1000)
     result = self.evaluate(use_ground_truth=False)
     estimated_false_positive_rate = result['params_emission'][:, -1, :101].sum(axis=-1)
     print(estimated_false_positive_rate[:500].mean())
