@@ -66,7 +66,7 @@ class Worker(torch.nn.Module):
             for name, param in self.gru_transition.named_parameters():
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
-            self.W_output_transition[:] = 1 # make this a positive number so that volatility at time 0 is null
+            self.W_output_transition[:] = 0 # make this a positive number so that volatility at time 0 is null
 
             # emission RNN
             for name, param in self.gru_emission.named_parameters():
@@ -266,7 +266,8 @@ if __name__ == "__main__":
         index = 23
 
     # 210 -> -4.6
-    # 22 -> -1
+    # 22 -> -1 and init to 0.1
+    # 23 -> -1 and init to 1
 
     np.random.seed(index)
     torch.manual_seed(index)
@@ -274,10 +275,15 @@ if __name__ == "__main__":
     self = Worker(
         SwitchingBandit(n_trials=200),
         "results/source/saved_models",
-        "banditGRU_newinit_id{0}".format(index),
+        "banditGRU_newinit_val_0_id{0}".format(index),
     )
-    self.load_model(nb_episodes=40000)
-    #self.train()
+
+    # newinit_val_0_1 -> Recinit -1 and Winit to 0.1
+    # newinit_val_1 -> Recinit -1 and Winit to 1
+    # newinit_val_0 -> Recinit 0 and Winit to 0
+
+    #self.load_model(nb_episodes=40000)
+    self.train()
     ffs = [0.05] * 500 + [0.3] * 500
     self.env.reset(nb_tasks=1000, ffs=ffs) #, mus=[0.1] * 1000)
     result = self.evaluate(use_ground_truth=False)
