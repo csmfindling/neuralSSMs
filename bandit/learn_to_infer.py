@@ -5,6 +5,7 @@ from task import SwitchingBandit
 from torch.utils import tensorboard
 import os
 from func_utils import compute_volatility, compute_emission
+from fit_model import stimfun_colour, stimfun_bandit
 
 def get_slope(data):
     """
@@ -91,47 +92,78 @@ class Worker(torch.nn.Module):
         # Initialize RNN state
         rnn_state_transition = rnn_state_transition if rnn_state_transition is not None else self.initial_rnn_transition.tile(1, nb_tasks, 1)
         rnn_state_emission = rnn_state_emission if rnn_state_emission is not None else self.initial_rnn_emission.tile(1, nb_tasks, 1)
+        log_alphas = torch.ones([self.env.n_tasks, self.env.n_arms]) * np.log(0.5)
 
         # pre-compute parameters
         params_transition = torch.zeros([self.env.n_tasks, self.env.n_trials])
         params_emission = torch.zeros([self.env.n_tasks, self.env.n_trials, self.nb_emission_levels])
-        log_alphas = torch.ones([self.env.n_tasks, self.env.n_arms]) * np.log(0.5)
         log_predict_probs_all_trials = torch.ones([self.env.n_tasks, self.env.n_trials, self.env.n_arms]) * np.log(0.5)
         all_actions = torch.zeros([self.env.n_tasks, self.env.n_trials])
         all_rewards = torch.zeros([self.env.n_tasks, self.env.n_trials])
-        debug_pfiltering = []
 
         # evaluate for each trial
         for i_trial in range(self.env.n_trials):
+            if self.env.agent_type == 'participant' and i_trial > 0:
+                if self.env.trlnum[i_trial] == 1 and i_trial > 0:
+                    log_alphas = torch.ones([self.env.n_tasks, self.env.n_arms]) * np.log(0.5)
+                    #rnn_state_transition = self.initial_rnn_transition.tile(1, nb_tasks, 1)
+                    #rnn_state_emission = self.initial_rnn_emission.tile(1, nb_tasks, 1)
+
             # compute volatility parameters
             if use_ground_truth:
                 vol = torch.clamp(torch.tensor([self.env.nu[:, i_trial]])[None, None].float(), 1e-7, 1 - 1e-7)
                 logvol, log_1_minus_vol = vol.log(), torch.log1p(-vol)
             else:
                 logvol, log_1_minus_vol = compute_volatility(rnn_state_transition, self.W_output_transition, _return_exp=False)
-
+            
             log_predict_probs = torch.stack([
                 torch.logaddexp(log_alphas[:, 0] + log_1_minus_vol, log_alphas[:, 1] + logvol),
                 torch.logaddexp(log_alphas[:, 1] + log_1_minus_vol, log_alphas[:, 0] + logvol)
-            ]).squeeze().T # p(z_t , y_{1:(t-1)}) = \sum_s p(z_t | z_{t-1}=s) • p(z_{t-1}=s, y_{1:(t-1)})
+            ]).T # p(z_t , y_{1:(t-1)}) = \sum_s p(z_t | z_{t-1}=s) • p(z_{t-1}=s, y_{1:(t-1)})
 
             if log_predict_probs.isnan().any() or rnn_state_transition.isnan().any() or self.W_output_transition.isnan().any():
                 import ipdb; ipdb.set_trace()
 
-            # select action
-            selected_action = (
-                (log_predict_probs[:, 0] == log_predict_probs[:, 1]) * torch.randint(high=2, size=(nb_tasks,)) + 
-                (log_predict_probs[:, 0] != log_predict_probs[:, 1]) * log_predict_probs.argmax(dim=1)
-            )
+            if self.env.agent_type == 'participant':
+                #selected_action = self.env.selected_actions[:, i_trial] # ground truth action
+                selected_action = (
+                     log_predict_probs.argmax(dim=1)
+                ).detach().numpy()
 
-            # pull arm and get reward
-            reward = self.env.pullArm(selected_action)
+                stimfun = stimfun_colour if self.env.condition_index == 1 else stimfun_bandit
+                outcome_of_selected_action = (
+                    (selected_action == 0) * self.env.feedback_arm0[:, i_trial] + (selected_action == 1) * self.env.feedback_arm1[:, i_trial]
+                )
+
+                distorted_arm0 = stimfun(self.env.feedback_arm0[:, i_trial], self.participant_params['alpha'], self.participant_params['omega'])
+                distorted_arm1 = stimfun(self.env.feedback_arm1[:, i_trial], self.participant_params['alpha'], self.participant_params['omega'])
+                
+                if (self.env.stimulus_range[:, None] == distorted_arm0[None]).sum() != 1 or (self.env.stimulus_range[:, None] == distorted_arm1[None]).sum() != 1:
+                    import ipdb; ipdb.set_trace()
+
+                idx_arm0 = np.argmax(self.env.stimulus_range[:, None] == distorted_arm0[None], axis=0)
+                idx_arm1 = np.argmax(self.env.stimulus_range[:, None] == distorted_arm1[None], axis=0)
+                feedback_arm0 = distorted_arm0
+                feedback_arm1 = distorted_arm1
+            else:
+                # select action
+                selected_action = (
+                    (log_predict_probs[:, 0] == log_predict_probs[:, 1]) * torch.randint(high=2, size=(nb_tasks,)) + 
+                    (log_predict_probs[:, 0] != log_predict_probs[:, 1]) * log_predict_probs.argmax(dim=1)
+                )
+
+                # pull arm and get reward
+                reward = self.env.pullArm(selected_action)              
+                idx_arm0 = self.env.idx_arm0[:, i_trial]
+                idx_arm1 = self.env.idx_arm1[:, i_trial]
+                feedback_arm0 = self.env.feedback_arm0[:, i_trial]
+                feedback_arm1 = self.env.feedback_arm1[:, i_trial]
 
             # compute emission probabilities
             p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-            proba_emission_arm0 = p_gen[:, torch.arange(self.env.n_tasks), self.env.idx_arm0[:, i_trial]]
-            proba_emission_arm1 = p_gen[:, torch.arange(self.env.n_tasks), self.env.idx_arm1[:, i_trial]]
-            emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze().T
+            proba_emission_arm0 = p_gen[:, torch.arange(self.env.n_tasks), idx_arm0]
+            proba_emission_arm1 = p_gen[:, torch.arange(self.env.n_tasks), idx_arm1]
+            emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze(axis=1).T
 
             # compute log alphas
             log_alphas = log_predict_probs + emission_probs.log() # p(z_t , y_{1:t}) = p(z_t , y_{1:(t-1)}) • p(y_t | z_t)
@@ -147,14 +179,23 @@ class Worker(torch.nn.Module):
 
                 # update emission RNN state
                 pfiltering = (log_predict_probs - torch.logsumexp(log_predict_probs, dim=-1, keepdims=True))
-                selected_pfiltering = (
-                    (pfiltering[:, 0] == pfiltering[:, 1]) * torch.randint(high=2, size=(nb_tasks,)) + 
-                    (pfiltering[:, 0] != pfiltering[:, 1]) * pfiltering.argmax(dim=1)
-                )
+                if self.env.agent_type == 'participant':
+                    selected_pfiltering = pfiltering.argmax(dim=1)
+                else:
+                    selected_pfiltering = ( 
+                        (pfiltering[:, 0] == pfiltering[:, 1]) * torch.randint(high=2, size=(nb_tasks,)) + 
+                        (pfiltering[:, 0] != pfiltering[:, 1]) * pfiltering.argmax(dim=1)
+                    )
+
+                    assert (
+                        (torch.from_numpy(self.env.feedback_arm0[:, i_trial]).unsqueeze(0) * (1 - 2 * selected_pfiltering)) == 
+                        torch.from_numpy(feedback_arm0).unsqueeze(0) * (selected_pfiltering == 0) + torch.from_numpy(feedback_arm1).unsqueeze(0) * (selected_pfiltering == 1)
+                    ).all()
+                
                 input_state = torch.vstack(
                     (
                         pfiltering[torch.arange(self.env.n_tasks), selected_pfiltering].unsqueeze(-1).T.exp(),
-                        torch.from_numpy(self.env.feedback_arm0[:, i_trial]).unsqueeze(0) * (1 - 2 * selected_pfiltering),
+                        torch.from_numpy(feedback_arm0).unsqueeze(0) * (selected_pfiltering == 0) + torch.from_numpy(feedback_arm1).unsqueeze(0) * (selected_pfiltering == 1),
                     )
                 ).float().detach()
                 _, rnn_state_emission = self.gru_emission(input_state.T.unsqueeze(1), rnn_state_emission)
@@ -162,8 +203,8 @@ class Worker(torch.nn.Module):
             # compute parameters            
             params_transition[:, i_trial] = compute_volatility(rnn_state_transition, self.W_output_transition, _return_exp=True)
             params_emission[:, i_trial] = compute_emission(rnn_state_emission, self.W_output_emission)
-            all_actions[:, i_trial] = selected_action
-            all_rewards[:, i_trial] = reward
+            all_actions[:, i_trial] = selected_action if self.env.agent_type == 'nSSM' else torch.from_numpy(selected_action)
+            all_rewards[:, i_trial] = reward if self.env.agent_type == 'nSSM' else torch.from_numpy(outcome_of_selected_action)
                 
         return {
             'rnn_state_transition': rnn_state_transition,
@@ -263,25 +304,44 @@ if __name__ == "__main__":
     try:
         index = int(sys.argv[1])
     except:
-        index = 23
+        index = 22
 
-    # 210 -> -4.6
-    # 22 -> -1
+    # newinit_val_0_1 -> Recinit -1 and Winit to 0.1, beta=2
+    # newinit_val_1 -> Recinit -1 and Winit to 1, beta=2
+    # newinit_val_0 -> Recinit 0 and Winit to 0, beta=2
+    # newinit_val_0_beta2 -> Recinit -1 and Winit to 0, beta=2
+    # newinit_val_0_beta3 -> Recinit -1 and Winit to 0, beta=3
+    # newinit_val_0_beta4 -> Recinit -1 and Winit to 0, beta=4
+    # newinit_val_0_beta5 -> Recinit -1 and Winit to 0, beta=5
 
     np.random.seed(index)
     torch.manual_seed(index)
 
     self = Worker(
-        SwitchingBandit(n_trials=200),
+        SwitchingBandit(),
         "results/source/saved_models",
         "banditGRU_newinit_id{0}".format(index),
     )
-    self.load_model(nb_episodes=40000)
+    self.load_model()
     #self.train()
-    ffs = [0.05] * 500 + [0.3] * 500
+    ffs = [0.1] * 500 + [0.3] * 500
     self.env.reset(nb_tasks=1000, ffs=ffs) #, mus=[0.1] * 1000)
     result = self.evaluate(use_ground_truth=False)
     estimated_false_positive_rate = result['params_emission'][:, -1, :101].sum(axis=-1)
     print(estimated_false_positive_rate[:500].mean())
     print(estimated_false_positive_rate[500:].mean())
+
+    # simulate a subject
+    from data.load_and_process_data import convert_mat_to_dataframe
+    trials_df = convert_mat_to_dataframe()
+    condition_index, subject_id, sample = 1, 2, 'sample2'
+    subtrials_df = trials_df[(trials_df.subj == subject_id) & (trials_df.cond == condition_index) & (trials_df.samp == sample)]
+    self.env.reset_to_participant_task(subtrials_df)
+    col_name = 'bandit' if condition_index == 0 else 'category'
+    self.participant_params = {
+        'alpha': subtrials_df.alpha.iloc[0],
+        'omega': subtrials_df.omega.iloc[0]
+    }
+    h = subtrials_df.h.iloc[0]
+    results = self.evaluate()
 
