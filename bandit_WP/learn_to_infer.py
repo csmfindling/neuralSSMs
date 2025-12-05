@@ -58,7 +58,7 @@ class Worker(torch.nn.Module):
         all_probas_emission = torch.zeros([self.env.num_tasks, self.env.num_trials, 101])        
 
         # pre-compute log alphas and log predicts
-        log_alphas_transition = torch.ones([self.env.num_tasks, 2]) * np.log(0.5)
+        log_alphas = torch.ones([self.env.num_tasks, 2]) * np.log(0.5)
 
         # pre-compute all actions and outcomes
         all_actions = torch.zeros([self.env.num_tasks, self.env.num_trials])
@@ -75,8 +75,8 @@ class Worker(torch.nn.Module):
 
             # compute log predicts for transition
             logpredict_transition = torch.stack([
-                torch.logaddexp(log_alphas_transition[:, 0] + log_1_minus_vol, log_alphas_transition[:, 1] + logvol),
-                torch.logaddexp(log_alphas_transition[:, 1] + log_1_minus_vol, log_alphas_transition[:, 0] + logvol)
+                torch.logaddexp(log_alphas[:, 0] + log_1_minus_vol, log_alphas[:, 1] + logvol),
+                torch.logaddexp(log_alphas[:, 1] + log_1_minus_vol, log_alphas[:, 0] + logvol)
             ]).squeeze().T # p(z_t , y_{1:(t-1)}) = \sum_s p(z_t | z_{t-1}=s) • p(z_{t-1}=s, y_{1:(t-1)})
             
             # renormalize log predicts
@@ -92,7 +92,7 @@ class Worker(torch.nn.Module):
                 ]).squeeze().T # p(c_t | z_t)
             
             logpredict_total = logpredict_transition if KO_WP else logpredict_association + logpredict_transition
-            # p(z_t, c_t, y_{1:(t-1)}) = p(c_t | z_t) • \sum_s p(z_t | z_{t-1}=s) • p(z_{t-1}=s, y_{1:(t-1)})
+            # p(z_t, c_t, y_{1:(t-1)}) = p(c_t | z_t) • p(z_t , y_{1:(t-1)})
 
             if logpredict_total.isnan().any() or rnn_state_association.isnan().any() or self.W_output_association.isnan().any() or self.W_output_transition.isnan().any() or self.W_output_emission.isnan().any():
                 import ipdb; ipdb.set_trace()
@@ -111,12 +111,26 @@ class Worker(torch.nn.Module):
             proba_emission_arm1 = p_gen[:, torch.arange(self.env.num_tasks), self.env.idx_arm1[:, i_trial]]
             emission_probs = torch.stack([proba_emission_arm0, proba_emission_arm1]).squeeze().T
 
-            logalphas_total = emission_probs.log() + logpredict_total
-            # p(z_t, c_t, y_{1:t}) = p(y_t | z_t) • p(z_t, c_t, y_{1:(t-1)})
+            log_alphas = logpredict_total + emission_probs.log() # p(z_t, c_t, y_{1:t}) = p(y_t | z_t) • p(z_t, c_t, y_{1:(t-1)})
 
             # Update RNN state
             if update_state:
+                # update emission RNN state
+                pfiltering = (logpredict_total - torch.logsumexp(logpredict_total, dim=-1, keepdims=True))
+                selected_pfiltering = (
+                    (pfiltering[:, 0] == pfiltering[:, 1]) * torch.randint(high=2, size=(self.env.num_tasks,)) + 
+                    (pfiltering[:, 0] != pfiltering[:, 1]) * pfiltering.argmax(dim=1)
+                )            
+                input_state = torch.vstack(
+                    (
+                        pfiltering[torch.arange(self.env.num_tasks), selected_pfiltering].unsqueeze(-1).T.exp(),
+                        torch.from_numpy(self.env.feedback_arm0[:, i_trial]).unsqueeze(0) * (1 - 2 * selected_pfiltering),
+                    )
+                ).float().detach()
+                _, rnn_state_emission = self.gru_emission(input_state.T.unsqueeze(1), rnn_state_emission)
+
                 # update association RNN state
+                p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
                 outcomes = (2 * torch.tensor([p_gen[:, i_k, :k].sum() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])]) - 1)
                 input_state = torch.vstack(
                     (                        
@@ -131,16 +145,6 @@ class Worker(torch.nn.Module):
                     emission_probs[torch.arange(self.env.n_tasks), selected_action].log() -  emission_probs[torch.arange(self.env.n_tasks), 1 - selected_action].log()
                 ).float().detach()
                 _, rnn_state_transition = self.gru_transition(input_state.unsqueeze(-1).unsqueeze(-1), rnn_state_transition)
-
-                # update emission RNN state
-                log_pfiltering = logalphas_total - torch.logsumexp(logalphas_total, dim=-1, keepdims=True)
-                input_state = torch.vstack(
-                    (
-                        log_pfiltering.T,
-                        torch.from_numpy(self.env.feedback_arm0[:, i_trial]).unsqueeze(0),
-                    )
-                ).float().detach()
-                _, rnn_state_emission = self.gru_emission(input_state.T.unsqueeze(1), rnn_state_emission)
 
             # compute parameters
             all_probas_association[:, i_trial] = torch.sigmoid(compute_association(rnn_state_association, self.W_output_association)).squeeze()

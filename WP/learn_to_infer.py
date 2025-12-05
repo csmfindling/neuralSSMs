@@ -45,7 +45,7 @@ class Worker(torch.nn.Module):
             name_of_emission_network = f"banditGRU_newinit_val_0_beta2_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
             number_of_iterations_of_emission_model = np.max([int(f.split('-')[-1].split('.')[0]) for f in files_to_load])
-            idx_of_emission_model = np.argmax([int(f.split('-')[-1].split('.')[0]) for f in files_to_load])
+            idx_of_emission_model = np.argmax([int(f.split('-')[-1].split('.')[0]) == number_of_iterations_of_emission_model for f in files_to_load])
             print(f"loading the emission model with {number_of_iterations_of_emission_model} iterations")
             state_dict_emission = torch.load(files_to_load[idx_of_emission_model])
             for (key, val) in self.named_parameters():
@@ -224,7 +224,7 @@ class Worker(torch.nn.Module):
             if episode_count % 10 == 0 and episode_count != 0:
                 
                 # Save model checkpoint
-                if episode_count % 500 == 0 and False:
+                if episode_count % 500 == 0:
                     model_dir = f"{self.model_path}/{self.model_name}"
                     os.makedirs(model_dir, exist_ok=True)
                     model_file = f"{model_dir}/model-{episode_count}.pth"
@@ -279,6 +279,12 @@ if __name__ == "__main__":
         with_emission=True,
         #train_with_emission=True
     )
-    
+
     self.load_model(trained_with_emission=False)
-    self.train()
+#    self.train()
+    ffs = [0.1] * 500 + [0.3] * 500
+    self.env.generate_test_task(num_tasks=1000, ffs=ffs, tau=0.05)
+    result = self.evaluate(use_probabilitistic_reward=False)
+    estimated_false_positive_rate = result['params_emission'][:, -1, :100].sum(axis=-1)
+    print(estimated_false_positive_rate[:500].mean())
+    print(estimated_false_positive_rate[500:].mean())

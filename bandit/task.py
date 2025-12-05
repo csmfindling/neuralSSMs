@@ -94,15 +94,14 @@ def gaussian_false_positive_rate(mu=None, false_positive_feedback=None, return_s
         return p_gen, mu, false_positive_feedback
     
 class SwitchingBandit:
-    def __init__(self, n_arms=2, n_trials=100, nb_tasks=100):
+    def __init__(self, n_arms=2, n_trials=100):
         self.n_arms = n_arms
         self.n_trials = n_trials
-        self.trial = None
-        self.reset(nb_tasks)
 
     def _generate_task_schedule(self, nb_tasks=100, nus=None, ffs=None, mus=None):
         # 1. Generate the drifting switch probability 'nu'
         self.nu = np.zeros([nb_tasks, self.n_trials])
+        self.n_tasks = nb_tasks
         # 2. Generate the sequence of correct arms
         self.correct_arms = np.zeros([nb_tasks, self.n_trials], dtype=int)
         self.idx_arm0 = np.zeros([nb_tasks, self.n_trials], dtype=int)
@@ -115,6 +114,8 @@ class SwitchingBandit:
         self.mus = np.zeros([nb_tasks])
         self.false_positive_feedback = np.zeros([nb_tasks])
         stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
+        self.stimulus_range = stimulus_range
+        self.agent_type = 'nSSM'
     
         for i in range(nb_tasks):
             self.nu[i] = nus[i] if nus is not None else volatility_distribution()
@@ -143,6 +144,24 @@ class SwitchingBandit:
             self.proba_emission_arm0[i] = torch.from_numpy(self.p_gen[i][self.idx_arm0[i]])
             self.proba_emission_arm1[i] = torch.from_numpy(self.p_gen[i][self.idx_arm1[i]])
 
+
+    def reset_to_participant_task(self, subtrials_df):
+        self.agent_type = 'participant'
+        self.n_tasks = 1
+        self.n_trials = len(subtrials_df['trlnum'].iloc[0])
+        self.idx_arm0 = None
+        self.idx_arm1 = None
+        self.proba_emission_arm0 = None
+        self.proba_emission_arm1 = None
+        self.correct_arms = None
+        self.nu = None
+        self.mus = None
+        self.false_positive_feedback = None
+        self.stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
+        self.feedback_arm0 = np.round(np.array(subtrials_df['stim'].iloc[0]), 2)[None]
+        self.feedback_arm1 = -self.feedback_arm0
+        self.condition_index = subtrials_df['cond'].iloc[0]
+        self.trlnum = np.array(subtrials_df['trlnum'].iloc[0]).astype(int)
 
     def reset(self, nb_tasks, nus=None, ffs=None, mus=None):
         self.n_tasks = nb_tasks
