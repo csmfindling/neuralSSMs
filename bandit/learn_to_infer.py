@@ -275,14 +275,17 @@ if __name__ == "__main__":
     self = Worker(
         SwitchingBandit(n_trials=200),
         "results/source/saved_models",
-        "banditGRU_newinit_val_0_id{0}".format(index),
+        "banditGRU_newinit_val_0_beta5_id{0}".format(index),
     )
 
-    # newinit_val_0_1 -> Recinit -1 and Winit to 0.1
-    # newinit_val_1 -> Recinit -1 and Winit to 1
-    # newinit_val_0 -> Recinit 0 and Winit to 0
+    # newinit_val_0_1 -> Recinit -1 and Winit to 0.1, beta=2
+    # newinit_val_1 -> Recinit -1 and Winit to 1, beta=2
+    # newinit_val_0 -> Recinit 0 and Winit to 0, beta=2
+    # newinit_val_0_beta2 -> Recinit -1 and Winit to 0, beta=2
+    # newinit_val_0_beta3 -> Recinit -1 and Winit to 0, beta=3
+    # newinit_val_0_beta3 -> Recinit -1 and Winit to 0, beta=4
+    # newinit_val_0_beta3 -> Recinit -1 and Winit to 0, beta=5
 
-    #self.load_model(nb_episodes=40000)
     self.train()
     ffs = [0.05] * 500 + [0.3] * 500
     self.env.reset(nb_tasks=1000, ffs=ffs) #, mus=[0.1] * 1000)
