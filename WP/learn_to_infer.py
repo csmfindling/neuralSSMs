@@ -35,15 +35,14 @@ class Worker(torch.nn.Module):
         self.with_emission = with_emission
         if with_emission or train_with_emission:
             # load emission model
-            model_id = 121
-            #model_id = int(model_name.split('id')[-1])
+            model_id = int(model_name.split('id')[-1])
 
             # initialize emission RNN
             self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
             self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
 
             path_to_emission_networks = "../bandit/results/source/saved_models"
-            name_of_emission_network = f"banditGRU_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
+            name_of_emission_network = f"banditGRU_newinit_val_0_beta2_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
             number_of_iterations_of_emission_model = np.max([int(f.split('-')[-1].split('.')[0]) for f in files_to_load])
             idx_of_emission_model = np.argmax([int(f.split('-')[-1].split('.')[0]) for f in files_to_load])
@@ -131,7 +130,7 @@ class Worker(torch.nn.Module):
                 # update emission RNN state if needed
                 if self.with_emission and (not use_probabilitistic_reward):
                     # update emission RNN state
-                    pfiltering = (logalphas[:, i_trial] - torch.logsumexp(logalphas[:, i_trial], dim=-1, keepdims=True))
+                    pfiltering = (logpredict - torch.logsumexp(logpredict, dim=-1, keepdims=True))
                     selected_pfiltering = (
                         (pfiltering[:, 0] == pfiltering[:, 1]) * torch.randint(high=2, size=(self.env.num_tasks,)) + 
                         (pfiltering[:, 0] != pfiltering[:, 1]) * pfiltering.argmax(dim=1)
