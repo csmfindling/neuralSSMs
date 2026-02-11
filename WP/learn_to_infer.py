@@ -61,7 +61,8 @@ class Worker(torch.nn.Module):
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
             torch.nn.init.xavier_uniform_(self.W_output_association)
-        self.optimizer = torch.optim.RMSprop([self.W_output_association] + list(self.gru_association.parameters()), lr=1e-3 if not train_with_emission else 1e-4)
+        #self.optimizer = torch.optim.RMSprop([self.W_output_association] + list(self.gru_association.parameters()), lr=1e-3 if not train_with_emission else 1e-4)
+        self.optimizer = torch.optim.RMSprop(self.gru_association.parameters(), lr=1e-3 if not train_with_emission else 1e-4)
 
     def evaluate(self, rnn_state_association=None, rnn_state_emission=None, update_state=True, use_probabilitistic_reward=False):
         """
@@ -179,7 +180,7 @@ class Worker(torch.nn.Module):
         if trained_with_emission is None:
             trained_with_emission = self.train_with_emission
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
-        model_dir = f"{self.model_path}/{self.model_name}".replace('_debug', "").replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
+        model_dir = f"{self.model_path}/{self.model_name}".replace('_beta2_wo_Woutput', "").replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
         model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"
         state_dict = torch.load(model_file)
         print(f"loading model {model_file}")
@@ -275,13 +276,13 @@ if __name__ == "__main__":
     self = Worker(
         probabilistic_task(),
         "results/source/saved_models",
-        "WP_GRU_debug_id{0}".format(index),
+        "WP_GRU_beta2_wo_Woutput_id{0}".format(index),
         with_emission=True,
-        #train_with_emission=True
+        train_with_emission=True
     )
 
     self.load_model(trained_with_emission=False)
-#    self.train()
+    self.train()
     ffs = [0.1] * 500 + [0.3] * 500
     self.env.generate_test_task(num_tasks=1000, ffs=ffs, tau=0.05)
     result = self.evaluate(use_probabilitistic_reward=False)
