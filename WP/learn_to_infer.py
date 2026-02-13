@@ -10,20 +10,27 @@ from func_utils import compute_emission, compute_association
 
 class Worker(torch.nn.Module):
     def __init__(
-            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, with_emission=False, train_with_emission=False
+            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, with_emission=False, finetune_association_w_emission=False, load_pretrained=True,
         ):
         super().__init__()
-        if (not with_emission) and train_with_emission:
-            raise ValueError("train_with_emission must be False if with_emission is False")        
+        if finetune_association_w_emission and not with_emission:
+            raise ValueError("finetune_association_w_emission can only be True if with_emission is also True; if finetune_association_w_emission is False, with_emission can be True or False")
+        if not load_pretrained:
+            if finetune_association_w_emission is not True or with_emission is not True:
+                raise ValueError("If load_pretrained is False, both finetune_association_w_emission and with_emission must be True.")
         self.model_path = model_path
+        self.load_pretrained = load_pretrained
         self.env = game
         self.episode_rewards = []
         self.init_type = init_type
         self.episode_count_max = episode_count_max
-        self.train_with_emission = train_with_emission
+        self.finetune_association_w_emission = finetune_association_w_emission
         self.model_name = model_name + "_init_{0}_optim_{1}_episodeNbMax_{2}_numUnits_{3}_trainWithEmission_{4}".format(
-            self.init_type, optimizer, int(self.episode_count_max), num_units, self.train_with_emission
+            self.init_type, optimizer, int(self.episode_count_max), num_units, self.finetune_association_w_emission
         )
+        if not load_pretrained: # if not loading a pretrained model, add the flag to the model name
+            self.model_name = self.model_name + "_loadPretrained_False"
+
         self.summary_writer = tensorboard.SummaryWriter("results/source/trainings_fullRNN/" + str(self.model_name))
         self.nb_units = num_units
 
@@ -33,7 +40,7 @@ class Worker(torch.nn.Module):
 
         # emission RNN
         self.with_emission = with_emission
-        if with_emission or train_with_emission:
+        if (with_emission or finetune_association_w_emission) and load_pretrained: # if we are loading a pretrained model, load the emission model
             # load emission model
             model_id = int(model_name.split('id')[-1])
 
@@ -54,6 +61,10 @@ class Worker(torch.nn.Module):
                         val[:] = state_dict_emission[key]
                     print(f"loaded {key}")
             print("loaded the emission model")
+        elif (with_emission or finetune_association_w_emission) and (not load_pretrained): # if we are not loading a pretrained model, initialize the emission model
+            print("initializing the emission model")
+            self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
+            self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
 
         # initialize optimizer
         with torch.no_grad():
@@ -61,8 +72,23 @@ class Worker(torch.nn.Module):
                 if 'weight' in name:
                     torch.nn.init.xavier_uniform_(param)
             torch.nn.init.xavier_uniform_(self.W_output_association)
-        #self.optimizer = torch.optim.RMSprop([self.W_output_association] + list(self.gru_association.parameters()), lr=1e-3 if not train_with_emission else 1e-4)
-        self.optimizer = torch.optim.RMSprop(self.gru_association.parameters(), lr=1e-3 if not train_with_emission else 1e-4)
+            if not load_pretrained:
+                for name, param in self.gru_emission.named_parameters():
+                    if 'weight' in name:
+                        torch.nn.init.xavier_uniform_(param)
+                torch.nn.init.xavier_uniform_(self.W_output_emission)
+
+        if self.load_pretrained:
+            if self.finetune_association_w_emission:
+                self.optimizer = torch.optim.RMSprop(self.gru_association.parameters(), lr=1e-4)
+            else:
+                self.optimizer = torch.optim.RMSprop(
+                    list(self.gru_association.parameters()) + [self.W_output_association], lr=1e-3
+                )
+        else:
+            self.optimizer = torch.optim.RMSprop(
+                list(self.gru_association.parameters()) + list(self.gru_emission.parameters()) + [self.W_output_association, self.W_output_emission], lr=1e-3
+            )
 
     def evaluate(self, rnn_state_association=None, rnn_state_emission=None, update_state=True, use_probabilitistic_reward=False):
         """
@@ -149,7 +175,10 @@ class Worker(torch.nn.Module):
                     outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
                 elif self.with_emission:
                     p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-                    outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
+                    epsilon = 1e-10 
+                    log_p_gen = torch.log(p_gen + epsilon)
+                    outcomes = torch.tanh(torch.tensor([-log_p_gen[:, i_k, k] + log_p_gen[:, i_k, -k] for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
+                    #outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
                 else:
                     outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
 
@@ -163,7 +192,7 @@ class Worker(torch.nn.Module):
 
             all_probas_association[:, i_trial] = torch.sigmoid(compute_association(rnn_state_association, self.W_output_association)).squeeze().detach()
             if self.with_emission:
-                all_params_emission[:, i_trial] = compute_emission(rnn_state_emission, self.W_output_emission).detach()
+                all_params_emission[:, i_trial] = compute_emission(rnn_state_emission, self.W_output_emission)
 
         return {
             'rnn_state_association': rnn_state_association,
@@ -178,9 +207,13 @@ class Worker(torch.nn.Module):
 
     def load_model(self, nb_episodes=None, trained_with_emission=None):
         if trained_with_emission is None:
-            trained_with_emission = self.train_with_emission
+            trained_with_emission = self.finetune_association_w_emission
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
-        model_dir = f"{self.model_path}/{self.model_name}".replace('_beta2_wo_Woutput', "").replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
+        if self.load_pretrained:
+            model_dir = f"{self.model_path}/{self.model_name}".replace('_beta2_wo_Woutput', "").replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
+        else:
+            model_dir = f"{self.model_path}/{self.model_name}"
+        # load the model
         model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"
         state_dict = torch.load(model_file)
         print(f"loading model {model_file}")
@@ -189,7 +222,12 @@ class Worker(torch.nn.Module):
                 with torch.no_grad():
                     val[:] = state_dict[key]
                 print(f"loaded {key}")
-            else:
+            if not self.load_pretrained: # if not loading the pretrained model, load the emission model.
+                if 'emission' in key:
+                    with torch.no_grad():
+                        val[:] = state_dict[key]
+                    print(f"loaded {key}")
+            else: # in the pretrained model, the emission model is already loaded in the initial state_dict.
                 print(f"not loaded {key}")
         print(f"loaded model {model_file}")
 
@@ -209,6 +247,11 @@ class Worker(torch.nn.Module):
             # evaluate model
             result = self.evaluate()
             marginal_loss = -torch.logsumexp(result["logalphas"], dim=-1).sum()
+            if not self.load_pretrained: # if not loading a pretrained model, train the association and the emission model. So we need to compute the slope loss.
+                slope_loss = torch.relu(result['params_emission'][:, :, :100].sum(axis=-1) - 0.5).sum() * 1e6
+                total_loss = marginal_loss + slope_loss
+            else:
+                total_loss = marginal_loss
 
             self.optimizer.zero_grad()
             marginal_loss.backward()
@@ -276,12 +319,13 @@ if __name__ == "__main__":
     self = Worker(
         probabilistic_task(),
         "results/source/saved_models",
-        "WP_GRU_beta2_wo_Woutput_id{0}".format(index),
+        "WP_GRU_no_pretrained_id{0}".format(index),
         with_emission=True,
-        train_with_emission=True
+        finetune_association_w_emission=True,
+        load_pretrained=False
     )
 
-    self.load_model(trained_with_emission=False)
+    #self.load_model(trained_with_emission=False)
     self.train()
     ffs = [0.1] * 500 + [0.3] * 500
     self.env.generate_test_task(num_tasks=1000, ffs=ffs, tau=0.05)
