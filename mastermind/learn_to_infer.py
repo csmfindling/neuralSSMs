@@ -181,8 +181,6 @@ class Worker(torch.nn.Module):
             # evaluate model
             result = self.evaluate()
             
-            # slopes = get_slope(result["params_emission"]).mean(axis=1)
-            # slope_loss = torch.relu(-probabilities_feedback.mean(axis=-1)).sum() * 1e6 # torch.relu(-slopes).mean() * 1e5
             marginal_loss = -torch.logsumexp(result["log_alphas"], dim=1).mean()
             total_loss = marginal_loss
             
