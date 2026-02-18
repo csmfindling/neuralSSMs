@@ -10,7 +10,7 @@ from func_utils import compute_emission, compute_association
 
 class Worker(torch.nn.Module):
     def __init__(
-            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, with_emission=False, finetune_association_w_emission=False, load_pretrained=True,
+            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, with_emission=False, finetune_association_w_emission=False, load_pretrained=True, policy_reg=None
         ):
         super().__init__()
         if finetune_association_w_emission and not with_emission:
@@ -22,14 +22,18 @@ class Worker(torch.nn.Module):
         self.load_pretrained = load_pretrained
         self.env = game
         self.episode_rewards = []
+        self.entropy_losses = []
         self.init_type = init_type
         self.episode_count_max = episode_count_max
+        self.policy_reg = policy_reg
         self.finetune_association_w_emission = finetune_association_w_emission
         self.model_name = model_name + "_init_{0}_optim_{1}_episodeNbMax_{2}_numUnits_{3}_trainWithEmission_{4}".format(
             self.init_type, optimizer, int(self.episode_count_max), num_units, self.finetune_association_w_emission
         )
         if not load_pretrained: # if not loading a pretrained model, add the flag to the model name
             self.model_name = self.model_name + "_loadPretrained_False"
+        if policy_reg is not None:
+            self.model_name = self.model_name + "_policyReg_{0}".format(str(policy_reg).replace(".", "_"))
 
         self.summary_writer = tensorboard.SummaryWriter("results/source/trainings_fullRNN/" + str(self.model_name))
         self.nb_units = num_units
@@ -53,16 +57,14 @@ class Worker(torch.nn.Module):
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
             number_of_iterations_of_emission_model = np.max([int(f.split('-')[-1].split('.')[0]) for f in files_to_load])
             idx_of_emission_model = np.argmax([int(f.split('-')[-1].split('.')[0]) == number_of_iterations_of_emission_model for f in files_to_load])
-            print(f"loading the emission model with {number_of_iterations_of_emission_model} iterations")
-            state_dict_emission = torch.load(files_to_load[idx_of_emission_model])
+            state_dict_emission = torch.load(files_to_load[idx_of_emission_model])            
             for (key, val) in self.named_parameters():
                 if 'emission' in key:
                     with torch.no_grad():
                         val[:] = state_dict_emission[key]
-                    print(f"loaded {key}")
-            print("loaded the emission model")
+            print('loaded the emission model with {} iterations'.format(number_of_iterations_of_emission_model))            
         elif (with_emission or finetune_association_w_emission) and (not load_pretrained): # if we are not loading a pretrained model, initialize the emission model
-            print("initializing the emission model")
+            print('initialized the emission model')
             self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
             self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
 
@@ -227,9 +229,6 @@ class Worker(torch.nn.Module):
                     with torch.no_grad():
                         val[:] = state_dict[key]
                     print(f"loaded {key}")
-            else: # in the pretrained model, the emission model is already loaded in the initial state_dict.
-                print(f"not loaded {key}")
-        print(f"loaded model {model_file}")
 
     def train(self, num_trials=500, num_steps=3):
         """
@@ -247,14 +246,21 @@ class Worker(torch.nn.Module):
             # evaluate model
             result = self.evaluate()
             marginal_loss = -torch.logsumexp(result["logalphas"], dim=-1).sum()
+            entropy_loss = 0
             if not self.load_pretrained: # if not loading a pretrained model, train the association and the emission model. So we need to compute the slope loss.
                 slope_loss = torch.relu(result['params_emission'][:, :, :100].sum(axis=-1) - 0.5).sum() * 1e6
-                total_loss = marginal_loss + slope_loss
+                if self.policy_reg is not None:
+                    logpredicts = result['logpredicts']
+                    logpredicts_norm = logpredicts - torch.logsumexp(logpredicts, dim=-1, keepdims=True)
+                    entropy_loss = -torch.sum(torch.exp(logpredicts_norm) * logpredicts_norm, dim=-1).sum()
+                    total_loss = marginal_loss + slope_loss - self.policy_reg * entropy_loss
+                else:
+                    total_loss = marginal_loss + slope_loss
             else:
                 total_loss = marginal_loss
 
             self.optimizer.zero_grad()
-            marginal_loss.backward()
+            total_loss.backward()
             self.optimizer.step()
             
             probas = result['true_association_probas'].squeeze()
@@ -263,6 +269,7 @@ class Worker(torch.nn.Module):
             correct = (result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean()
 
             self.episode_rewards.append(correct)
+            self.entropy_losses.append(entropy_loss)
 
             # Periodic evaluation and logging
             if episode_count % 10 == 0 and episode_count != 0:
@@ -284,6 +291,11 @@ class Worker(torch.nn.Module):
                     episode_count
                 )
 
+                self.summary_writer.add_scalar(
+                    "Train/Entropy_Loss",
+                    float(entropy_loss.detach().numpy()),
+                    episode_count
+                )
                 self.summary_writer.add_scalar(
                     "Train/NegLogLikelihood_Loss",
                     float(marginal_loss.detach().numpy()) / num_trials,
@@ -322,7 +334,8 @@ if __name__ == "__main__":
         "WP_GRU_no_pretrained_id{0}".format(index),
         with_emission=True,
         finetune_association_w_emission=True,
-        load_pretrained=False
+        load_pretrained=False,
+        policy_reg=0.05
     )
 
     #self.load_model(trained_with_emission=False)
