@@ -22,7 +22,6 @@ class Worker(torch.nn.Module):
         self.load_pretrained = load_pretrained
         self.env = game
         self.episode_rewards = []
-        self.entropy_losses = []
         self.init_type = init_type
         self.episode_count_max = episode_count_max
         self.policy_reg = policy_reg
@@ -212,7 +211,7 @@ class Worker(torch.nn.Module):
             trained_with_emission = self.finetune_association_w_emission
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
         if self.load_pretrained:
-            model_dir = f"{self.model_path}/{self.model_name}".replace('_beta2_wo_Woutput', "").replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
+            model_dir = f"{self.model_path}/{self.model_name}".replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
         else:
             model_dir = f"{self.model_path}/{self.model_name}"
         # load the model
@@ -230,7 +229,7 @@ class Worker(torch.nn.Module):
                         val[:] = state_dict[key]
                     print(f"loaded {key}")
 
-    def train(self, num_trials=500, num_steps=3):
+    def train(self, num_trials=500, num_steps=5):
         """
         Main training/evaluation loop
         
@@ -269,7 +268,6 @@ class Worker(torch.nn.Module):
             correct = (result['logpredicts'].argmax(-1).detach() == self.env.correct_weather).float().mean()
 
             self.episode_rewards.append(correct)
-            self.entropy_losses.append(entropy_loss)
 
             # Periodic evaluation and logging
             if episode_count % 10 == 0 and episode_count != 0:
@@ -325,17 +323,22 @@ if __name__ == "__main__":
     except:
         index = 5
 
-    np.random.seed(index)
-    torch.manual_seed(index)
+    policy_regs = [0.05, 0.1, 0.3, 0.5, 1, 2]
+
+    index_agent = index % 30
+    index_reg = index // 30
+
+    np.random.seed(index_agent)
+    torch.manual_seed(index_agent)
 
     self = Worker(
         probabilistic_task(),
         "results/source/saved_models",
-        "WP_GRU_no_pretrained_id{0}".format(index),
+        "WP_GRU_no_pretrained_agent{0}".format(index_agent),
         with_emission=True,
         finetune_association_w_emission=True,
         load_pretrained=False,
-        policy_reg=0.05
+        policy_reg=policy_regs[index_reg]
     )
 
     #self.load_model(trained_with_emission=False)
