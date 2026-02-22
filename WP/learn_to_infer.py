@@ -10,29 +10,43 @@ from func_utils import compute_emission, compute_association
 
 class Worker(torch.nn.Module):
     def __init__(
-            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, with_emission=False, finetune_association_w_emission=False, load_pretrained=True, policy_reg=None
+            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, w_emission=False, train_w_emission=False, train_in_cat_task_from_scratch=False, entropy_reg=None
         ):
+        '''
+        Args:
+            game: The game object
+            model_path: The path to the model
+            model_name: The name of the model
+            num_units: The number of units in the RNN
+            init_type: The type of initialization
+            optimizer: The optimizer
+            episode_count_max: The maximum number of episodes
+            w_emission: Whether to use an emission model. If True and unless indicated by train_in_cat_task_from_scratch, a pre-trained brandit emission model will be used to compute the emission probabilities.
+            train_w_emission: Whether to train / finetune the emission and association models together given the presence of the bandit emission model.
+            train_in_cat_task_from_scratch: Whether to train the association and emission models from scratch
+            entropy_reg: The entropy regularization
+        '''
         super().__init__()
-        if finetune_association_w_emission and not with_emission:
-            raise ValueError("finetune_association_w_emission can only be True if with_emission is also True; if finetune_association_w_emission is False, with_emission can be True or False")
-        if not load_pretrained:
-            if finetune_association_w_emission is not True or with_emission is not True:
-                raise ValueError("If load_pretrained is False, both finetune_association_w_emission and with_emission must be True.")
+        if train_w_emission and not w_emission:
+            raise ValueError("you must load the emission model if you want to train the association and emission modules with the emission model")
+        if train_in_cat_task_from_scratch:
+            if train_w_emission is not True or w_emission is not True:
+                raise ValueError("If train_in_cat_task_from_scratch is True, both train_w_emission and w_emission must be True.")
         self.model_path = model_path
-        self.load_pretrained = load_pretrained
+        self.train_in_cat_task_from_scratch = train_in_cat_task_from_scratch
         self.env = game
         self.episode_rewards = []
         self.init_type = init_type
         self.episode_count_max = episode_count_max
-        self.policy_reg = policy_reg
-        self.finetune_association_w_emission = finetune_association_w_emission
+        self.entropy_reg = entropy_reg
+        self.train_w_emission = train_w_emission
+        self.w_emission = w_emission
         self.model_name = model_name + "_init_{0}_optim_{1}_episodeNbMax_{2}_numUnits_{3}_trainWithEmission_{4}".format(
-            self.init_type, optimizer, int(self.episode_count_max), num_units, self.finetune_association_w_emission
+            self.init_type, optimizer, int(self.episode_count_max), num_units, self.train_w_emission
         )
-        if not load_pretrained: # if not loading a pretrained model, add the flag to the model name
-            self.model_name = self.model_name + "_loadPretrained_False"
-        if policy_reg is not None:
-            self.model_name = self.model_name + "_policyReg_{0}".format(str(policy_reg).replace(".", "_"))
+        self.model_name = self.model_name + f"_trainInCatTaskFromScratch_{train_in_cat_task_from_scratch}"
+        if entropy_reg is not None:
+            self.model_name = self.model_name + "_policyReg_{0}".format(str(entropy_reg).replace(".", "_"))
 
         self.summary_writer = tensorboard.SummaryWriter("results/source/trainings_fullRNN/" + str(self.model_name))
         self.nb_units = num_units
@@ -40,12 +54,27 @@ class Worker(torch.nn.Module):
         # association RNN
         self.W_output_association = torch.nn.Parameter(torch.zeros(self.nb_units, 4))
         self.gru_association = torch.nn.GRU(input_size=5, hidden_size=self.nb_units, batch_first=True, bias=True)
+        # initialize association RNN
+        with torch.no_grad():
+            for name, param in self.gru_association.named_parameters():
+                if 'weight' in name:
+                    torch.nn.init.xavier_uniform_(param)
+            torch.nn.init.xavier_uniform_(self.W_output_association)
 
         # emission RNN
-        self.with_emission = with_emission
-        if (with_emission or finetune_association_w_emission) and load_pretrained: # if we are loading a pretrained model, load the emission model
+        if train_in_cat_task_from_scratch:
+            self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
+            self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
+            # initialize emission RNN
+            with torch.no_grad():
+                for name, param in self.gru_emission.named_parameters():
+                    if 'weight' in name:
+                        torch.nn.init.xavier_uniform_(param)
+                torch.nn.init.xavier_uniform_(self.W_output_emission)
+            print('initialized the emission model')
+        elif w_emission: # if we are loading a pretrained model, load the emission model
             # load emission model
-            model_id = int(model_name.split('id')[-1])
+            model_id = int(model_name.split('agent')[-1])
 
             # initialize emission RNN
             self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
@@ -61,35 +90,25 @@ class Worker(torch.nn.Module):
                 if 'emission' in key:
                     with torch.no_grad():
                         val[:] = state_dict_emission[key]
-            print('loaded the emission model with {} iterations'.format(number_of_iterations_of_emission_model))            
-        elif (with_emission or finetune_association_w_emission) and (not load_pretrained): # if we are not loading a pretrained model, initialize the emission model
-            print('initialized the emission model')
-            self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
-            self.W_output_emission = torch.nn.Parameter(torch.zeros(self.nb_units, 201))
+            print('loaded the emission model with {} iterations'.format(number_of_iterations_of_emission_model))
 
-        # initialize optimizer
-        with torch.no_grad():
-            for name, param in self.gru_association.named_parameters():
-                if 'weight' in name:
-                    torch.nn.init.xavier_uniform_(param)
-            torch.nn.init.xavier_uniform_(self.W_output_association)
-            if not load_pretrained:
-                for name, param in self.gru_emission.named_parameters():
-                    if 'weight' in name:
-                        torch.nn.init.xavier_uniform_(param)
-                torch.nn.init.xavier_uniform_(self.W_output_emission)
-
-        if self.load_pretrained:
-            if self.finetune_association_w_emission:
-                self.optimizer = torch.optim.RMSprop(self.gru_association.parameters(), lr=1e-4)
+        if self.train_in_cat_task_from_scratch:
+            self.optimizer = torch.optim.RMSprop(
+                list(self.gru_association.parameters()) + list(self.gru_emission.parameters()) + [self.W_output_association, self.W_output_emission], lr=1e-3
+            )
+        else:            
+            if self.train_w_emission:
+                self.optimizer = torch.optim.RMSprop(list(self.gru_association.parameters()) + list(self.gru_emission.parameters()), lr=1e-4)
             else:
                 self.optimizer = torch.optim.RMSprop(
                     list(self.gru_association.parameters()) + [self.W_output_association], lr=1e-3
                 )
-        else:
-            self.optimizer = torch.optim.RMSprop(
-                list(self.gru_association.parameters()) + list(self.gru_emission.parameters()) + [self.W_output_association, self.W_output_emission], lr=1e-3
-            )
+        self.__post_init__()
+
+    def __post_init__(self):
+        if (not self.train_in_cat_task_from_scratch) and self.w_emission:
+            self.load_model(trained_w_emission=False)
+            print('loaded the association model')
 
     def evaluate(self, rnn_state_association=None, rnn_state_emission=None, update_state=True, use_probabilitistic_reward=False):
         """
@@ -120,7 +139,7 @@ class Worker(torch.nn.Module):
         logpredicts = torch.zeros([self.env.num_tasks, self.env.num_trials, 2])
 
         # initialize emission RNN state if needed
-        if self.with_emission:
+        if self.w_emission:
             rnn_state_emission = rnn_state_emission if rnn_state_emission is not None else torch.zeros(1, self.env.num_tasks, self.nb_units)
             all_params_emission = torch.zeros([self.env.num_tasks, self.env.num_trials, 201])
 
@@ -138,7 +157,7 @@ class Worker(torch.nn.Module):
             ]).squeeze().T # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
 
             # compute emission probabilities if needed
-            if self.with_emission and not use_probabilitistic_reward:
+            if self.w_emission and not use_probabilitistic_reward:
                 p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
                 proba_emission_arm0 = p_gen[:, torch.arange(self.env.num_tasks), self.env.idx_arm0[:, i_trial]]
                 proba_emission_arm1 = p_gen[:, torch.arange(self.env.num_tasks), self.env.idx_arm1[:, i_trial]]
@@ -156,7 +175,7 @@ class Worker(torch.nn.Module):
             # update RNN state if needed
             if update_state:
                 # update emission RNN state if needed
-                if self.with_emission and (not use_probabilitistic_reward):
+                if self.w_emission and (not use_probabilitistic_reward):
                     # update emission RNN state
                     pfiltering = (logpredict - torch.logsumexp(logpredict, dim=-1, keepdims=True))
                     selected_pfiltering = (
@@ -174,12 +193,9 @@ class Worker(torch.nn.Module):
                 # update association RNN state
                 if use_probabilitistic_reward:
                     outcomes = -self.env.probabilistic_rewards[0, :, i_trial]
-                elif self.with_emission:
+                elif self.w_emission:
                     p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-                    epsilon = 1e-10 
-                    log_p_gen = torch.log(p_gen + epsilon)
-                    outcomes = torch.tanh(torch.tensor([-log_p_gen[:, i_k, k] + log_p_gen[:, i_k, -k] for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
-                    #outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
+                    outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
                 else:
                     outcomes = 2 * self.env.correct_weather[:, i_trial] - 1
 
@@ -192,42 +208,37 @@ class Worker(torch.nn.Module):
                 _, rnn_state_association = self.gru_association(input_state.T.unsqueeze(1), rnn_state_association)
 
             all_probas_association[:, i_trial] = torch.sigmoid(compute_association(rnn_state_association, self.W_output_association)).squeeze().detach()
-            if self.with_emission:
+            if self.w_emission:
                 all_params_emission[:, i_trial] = compute_emission(rnn_state_emission, self.W_output_emission)
 
         return {
             'rnn_state_association': rnn_state_association,
-            'rnn_state_emission': rnn_state_emission if self.with_emission else None,
+            'rnn_state_emission': rnn_state_emission if self.w_emission else None,
             'greedy': self.env.greedy,
             'logalphas': logalphas,
             'probas_association': all_probas_association,
-            'params_emission': all_params_emission if self.with_emission else None,
+            'params_emission': all_params_emission if self.w_emission else None,
             "true_association_probas": self.env.probas,
             "logpredicts": logpredicts,
         }
 
-    def load_model(self, nb_episodes=None, trained_with_emission=None):
-        if trained_with_emission is None:
-            trained_with_emission = self.finetune_association_w_emission
+    def load_model(self, nb_episodes=None, trained_w_emission=None):
+        if trained_w_emission is None:
+            trained_w_emission = self.train_w_emission
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
-        if self.load_pretrained:
-            model_dir = f"{self.model_path}/{self.model_name}".replace('_trainWithEmission_True', f"_trainWithEmission_{trained_with_emission}")
-        else:
-            model_dir = f"{self.model_path}/{self.model_name}"
+        model_dir = f"{self.model_path}/{self.model_name}".replace('_trainWithEmission_True', f"_trainWithEmission_{trained_w_emission}")
         # load the model
         model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"
         state_dict = torch.load(model_file)
         print(f"loading model {model_file}")
         for (key, val) in self.named_parameters():
-            if 'association' in key:
-                with torch.no_grad():
+            with torch.no_grad():
+                if key in state_dict.keys():
                     val[:] = state_dict[key]
-                print(f"loaded {key}")
-            if not self.load_pretrained: # if not loading the pretrained model, load the emission model.
-                if 'emission' in key:
-                    with torch.no_grad():
-                        val[:] = state_dict[key]
                     print(f"loaded {key}")
+                else:
+                    print(f"key {key} not found in state_dict")
+           
 
     def train(self, num_trials=500, num_steps=5):
         """
@@ -245,14 +256,13 @@ class Worker(torch.nn.Module):
             # evaluate model
             result = self.evaluate()
             marginal_loss = -torch.logsumexp(result["logalphas"], dim=-1).sum()
-            entropy_loss = 0
-            if not self.load_pretrained: # if not loading a pretrained model, train the association and the emission model. So we need to compute the slope loss.
+            if self.train_in_cat_task_from_scratch: # if not loading a pretrained model, train the association and the emission model. So we need to compute the slope loss.
                 slope_loss = torch.relu(result['params_emission'][:, :, :100].sum(axis=-1) - 0.5).sum() * 1e6
-                if self.policy_reg is not None:
+                if self.entropy_reg is not None:
                     logpredicts = result['logpredicts']
                     logpredicts_norm = logpredicts - torch.logsumexp(logpredicts, dim=-1, keepdims=True)
                     entropy_loss = -torch.sum(torch.exp(logpredicts_norm) * logpredicts_norm, dim=-1).sum()
-                    total_loss = marginal_loss + slope_loss - self.policy_reg * entropy_loss
+                    total_loss = marginal_loss + slope_loss - self.entropy_reg * entropy_loss
                 else:
                     total_loss = marginal_loss + slope_loss
             else:
@@ -289,11 +299,13 @@ class Worker(torch.nn.Module):
                     episode_count
                 )
 
-                self.summary_writer.add_scalar(
-                    "Train/Entropy_Loss",
-                    float(entropy_loss.detach().numpy()),
-                    episode_count
-                )
+                if self.train_in_cat_task_from_scratch and self.entropy_reg is not None:
+                    self.summary_writer.add_scalar(
+                        "Train/Entropy_Loss",
+                        float(entropy_loss.detach().numpy()),
+                        episode_count
+                    )
+
                 self.summary_writer.add_scalar(
                     "Train/NegLogLikelihood_Loss",
                     float(marginal_loss.detach().numpy()) / num_trials,
@@ -323,7 +335,7 @@ if __name__ == "__main__":
     except:
         index = 5
 
-    policy_regs = [0.05, 0.1, 0.3, 0.5, 1, 2]
+    entropy_regs = [0.05, 0.1, 0.3, 0.5, 1, 2]
 
     index_agent = index % 30
     index_reg = index // 30
@@ -334,14 +346,14 @@ if __name__ == "__main__":
     self = Worker(
         probabilistic_task(),
         "results/source/saved_models",
-        "WP_GRU_no_pretrained_agent{0}".format(index_agent),
-        with_emission=True,
-        finetune_association_w_emission=True,
-        load_pretrained=False,
-        policy_reg=policy_regs[index_reg]
+        "WP_GRU_agent{0}".format(index_agent),
+        w_emission=True,
+        train_w_emission=True,
+        train_in_cat_task_from_scratch=False,
+        entropy_reg=None
     )
 
-    #self.load_model(trained_with_emission=False)
+    #self.load_model(trained_w_emission=False)
     self.train()
     ffs = [0.1] * 500 + [0.3] * 500
     self.env.generate_test_task(num_tasks=1000, ffs=ffs, tau=0.05)
