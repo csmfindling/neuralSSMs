@@ -74,7 +74,7 @@ class Worker(torch.nn.Module):
             print('initialized the emission model')
         elif w_emission: # if we are loading a pretrained model, load the emission model
             # load emission model
-            model_id = int(model_name.split('agent')[-1])
+            model_id = int(model_name.split('agent')[-1] + 1)
 
             # initialize emission RNN
             self.gru_emission = torch.nn.GRU(input_size=2, hidden_size=self.nb_units, batch_first=True, bias=True)
