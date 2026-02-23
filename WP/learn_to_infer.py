@@ -155,6 +155,7 @@ class Worker(torch.nn.Module):
                 (logpredict_0[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1),
                 (logpredict_1[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1)
             ]).squeeze().T # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
+            logpredict = logpredict - torch.logsumexp(logpredict, dim=-1, keepdims=True)
 
             # compute emission probabilities if needed
             if self.w_emission and not use_probabilitistic_reward:
