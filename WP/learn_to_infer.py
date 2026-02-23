@@ -155,7 +155,7 @@ class Worker(torch.nn.Module):
                 (logpredict_0[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1),
                 (logpredict_1[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1)
             ]).squeeze().T # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
-            logpredict = logpredict - torch.logsumexp(logpredict, dim=-1, keepdims=True)
+            logpredict = logpredict - torch.logsumexp(logpredict, dim=-1, keepdims=True) # p(z_t | c_t) = p(z_t, c_t) / \sum_{z_t'} p(z_t', c_t)
 
             # compute emission probabilities if needed
             if self.w_emission and not use_probabilitistic_reward:
@@ -170,8 +170,8 @@ class Worker(torch.nn.Module):
                     emission_probs = torch.stack([1 - self.env.correct_weather[:, i_trial], self.env.correct_weather[:, i_trial]]).T
 
             # compute logalphas and logpredicts
-            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(z_t, c_t, y_t) = p(z_t) • p(c_t | z_t) • p(y_t | z_t)
-            logpredicts[:, i_trial] = logpredict # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
+            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(y_t, z_t | c_t) = p(z_t | c_t) • p(y_t | z_t)
+            logpredicts[:, i_trial] = logpredict # p(z_t | c_t)
 
             # update RNN state if needed
             if update_state:
@@ -348,8 +348,8 @@ if __name__ == "__main__":
         probabilistic_task(),
         "results/source/saved_models",
         "WP_GRU_agent{0}".format(index_agent),
-        w_emission=True,
-        train_w_emission=True,
+        w_emission=False,
+        train_w_emission=False,
         train_in_cat_task_from_scratch=False,
         entropy_reg=None
     )
