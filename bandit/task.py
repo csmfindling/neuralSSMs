@@ -4,6 +4,96 @@ import torch
 from scipy.stats import truncnorm
 from scipy.optimize import brentq
 
+def fit_exponential_distribution(data):
+    """
+    Fit an exponential distribution to data and estimate the rate parameter (lambda).
+    
+    Parameters
+    ----------
+    data : array-like
+        Observed data assumed to be drawn from an exponential distribution (support: x >= 0).
+    
+    Returns
+    -------
+    lambda_hat : float
+        Maximum likelihood estimate of the rate parameter lambda.
+    """
+    data = np.asarray(data)
+    if np.any(data < 0):
+        raise ValueError("All data for exponential fit must be non-negative.")
+    mean = np.mean(data)
+    if mean == 0:
+        raise ValueError("Mean of data is zero, cannot fit exponential distribution.")
+    lambda_hat = 1.0 / mean
+    return lambda_hat
+
+
+def truncated_exponential_logpdf(x, lambda_param, ub):
+    """
+    Compute the logpdf of an exponential distribution with rate lambda_param,
+    truncated to [0, ub].
+
+    Parameters
+    ----------
+    x : array_like
+        Points at which to evaluate the logpdf. Must be in [0, ub].
+    lambda_param : float
+        Rate parameter (lambda > 0) of the exponential.
+    ub : float
+        Upper bound of the truncation (must be > 0).
+
+    Returns
+    -------
+    logpdf : array_like
+        The log-probability density at x.
+    """
+    x = np.asarray(x)
+    # Set logpdf to -np.inf where x is outside [0, ub]
+    logpdf = np.full_like(x, -np.inf, dtype=np.float64)
+    if lambda_param <= 0 or (ub is not None and ub <= 0):
+        raise ValueError("lambda_param and ub must be positive.")
+    # Only compute logpdf for valid x in [0, ub]
+    if ub is not None:
+        Z = 1 - np.exp(-lambda_param * ub)  # normalization constant
+        mask = (x >= 0) & (x <= ub)
+    else:
+        mask = (x >= 0)
+        Z = 1
+    logpdf[mask] = np.log(lambda_param) - lambda_param * x[mask] - np.log(Z)
+    return logpdf
+
+def sample_truncated_exponential(size=1, lambda_param=1.0, ub=1.0, u=None):
+    """
+    Sample from an exponential distribution with rate lambda_param,
+    truncated to [0, ub].
+
+    Parameters
+    ----------
+    size : int or tuple of ints
+        Number of samples or shape of the returned samples.
+    lambda_param : float
+        Rate parameter (lambda > 0).
+    ub : float
+        Upper bound (must be > 0).
+
+    Returns
+    -------
+    samples : np.ndarray
+        Samples from the truncated exponential distribution.
+    """
+    if lambda_param <= 0 or (ub is not None and ub <= 0):
+        raise ValueError("lambda_param and ub must be positive.")
+    size = size if isinstance(size, tuple) else (size,)
+    if ub is None:
+        return np.random.exponential(1./lambda_param, size)
+    # Inverse transform sampling for truncated exponential
+    if u is None:
+        u = np.random.uniform(0, 1, size)
+    Z = 1 - np.exp(-lambda_param * ub)
+    samples = -np.log(1 - u * Z) / lambda_param
+    return samples
+
+
 def volatility_distribution(lambda_param=10):
     while True:
         nu = np.random.exponential(1./lambda_param)
@@ -89,21 +179,21 @@ def gaussian_false_positive_rate(mu=None, false_positive_feedback=None, return_s
     p_gen = pdf_vals / pdf_vals.sum()
 
     if return_stimulus_range:
-        return stimulus_range, p_gen, mu, false_positive_feedback
+        return stimulus_range, p_gen, mu, sigma, false_positive_feedback
     else:
-        return p_gen, mu, false_positive_feedback
+        return p_gen, mu, sigma, false_positive_feedback
     
 class SwitchingBandit:
     def __init__(self, n_arms=2, n_trials=100):
         self.n_arms = n_arms
         self.n_trials = n_trials
 
-    def _generate_task_schedule(self, nb_tasks=100, nus=None, ffs=None, mus=None):
+    def _generate_task_schedule(self, nb_tasks=100, nus=None, ffs=None, mus=None, correct_arms=None):
         # 1. Generate the drifting switch probability 'nu'
         self.nu = np.zeros([nb_tasks, self.n_trials])
         self.n_tasks = nb_tasks
         # 2. Generate the sequence of correct arms
-        self.correct_arms = np.zeros([nb_tasks, self.n_trials], dtype=int)
+        self.correct_arms = correct_arms if correct_arms is not None else np.zeros([nb_tasks, self.n_trials], dtype=int)
         self.idx_arm0 = np.zeros([nb_tasks, self.n_trials], dtype=int)
         self.idx_arm1 = np.zeros([nb_tasks, self.n_trials], dtype=int)
         self.feedback_arm0 = np.zeros([nb_tasks, self.n_trials], dtype=float)
@@ -113,23 +203,25 @@ class SwitchingBandit:
         self.p_gen = np.zeros([nb_tasks, 201])
         self.mus = np.zeros([nb_tasks])
         self.false_positive_feedback = np.zeros([nb_tasks])
+        self.sigmas = np.zeros([nb_tasks])
         stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
         self.stimulus_range = stimulus_range
         self.agent_type = 'nSSM'
     
         for i in range(nb_tasks):
             self.nu[i] = nus[i] if nus is not None else volatility_distribution()
-            self.correct_arms[i, 0] = np.random.randint(self.n_arms)
+            if correct_arms is None:
+                self.correct_arms[i, 0] = np.random.randint(self.n_arms)
 
-            for t in range(1, self.n_trials):
-                # Update correct arm
-                if np.random.rand() < self.nu[i, t-1]:  # Switch occurs
-                    other_arms = [arm for arm in range(self.n_arms) if arm != self.correct_arms[i, t-1]]
-                    self.correct_arms[i, t] = np.random.choice(other_arms)
-                else:  # No switch
-                    self.correct_arms[i, t] = self.correct_arms[i, t-1]
+                for t in range(1, self.n_trials):
+                    # Update correct arm
+                    if np.random.rand() < self.nu[i, t-1]:  # Switch occurs
+                        other_arms = [arm for arm in range(self.n_arms) if arm != self.correct_arms[i, t-1]]
+                        self.correct_arms[i, t] = np.random.choice(other_arms)
+                    else:  # No switch
+                        self.correct_arms[i, t] = self.correct_arms[i, t-1]
 
-            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(
+            self.p_gen[i], self.mus[i], self.sigmas[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(
                 false_positive_feedback=ffs[i] if ffs is not None else None,
                 mu=mus[i] if mus is not None else None
             )
@@ -144,8 +236,7 @@ class SwitchingBandit:
             self.proba_emission_arm0[i] = torch.from_numpy(self.p_gen[i][self.idx_arm0[i]])
             self.proba_emission_arm1[i] = torch.from_numpy(self.p_gen[i][self.idx_arm1[i]])
 
-
-    def reset_to_participant_task(self, subtrials_df):
+    def reset_to_participant_task(self, subtrials_df, block_ids=None):
         self.agent_type = 'participant'
         self.n_tasks = 1
         self.n_trials = len(subtrials_df['trlnum'].iloc[0])
@@ -163,19 +254,22 @@ class SwitchingBandit:
         self.condition_index = subtrials_df['cond'].iloc[0]
         self.trlnum = np.array(subtrials_df['trlnum'].iloc[0]).astype(int)
 
-    def reset(self, nb_tasks, nus=None, ffs=None, mus=None):
+        if block_ids is not None:
+            self.block_index = np.array(subtrials_df['block_id'].iloc[0]).astype(int)
+            self.feedback_arm0 = self.feedback_arm0[0, np.isin(self.block_index, block_ids)][None]
+            self.feedback_arm1 = self.feedback_arm1[0, np.isin(self.block_index, block_ids)][None]
+            self.n_trials = len(self.feedback_arm0[0])
+            self.trlnum = self.trlnum[np.isin(self.block_index, block_ids)]
+
+    def reset(self, nb_tasks, nus=None, ffs=None, mus=None, correct_arms=None):
         self.n_tasks = nb_tasks
-        self._generate_task_schedule(nb_tasks, nus, ffs, mus)
+        self._generate_task_schedule(nb_tasks, nus, ffs, mus, correct_arms)
         self.trial = 0
 
-    def pullArm(self, arm_index):
-        
+    def pullArm(self, arm_index):        
         assert np.all(np.isin(arm_index, [0, 1]))
-
         reward = (arm_index == 0) * self.feedback_arm0[:, self.trial] + (arm_index == 1) * self.feedback_arm1[:, self.trial]        
-
-        self.trial += 1
-        
+        self.trial += 1        
         return reward
 
 
