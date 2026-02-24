@@ -336,7 +336,7 @@ if __name__ == "__main__":
     except:
         index = 5
 
-    entropy_regs = [0.05, 0.1, 0.3, 0.5, 1, 2]
+    entropy_regs = [0.1, 0.3, 0.5, 1, 2, 4]
 
     index_agent = index % 30
     index_reg = index // 30
@@ -348,9 +348,9 @@ if __name__ == "__main__":
         probabilistic_task(),
         "results/source/saved_models",
         "WP_GRU_agent{0}".format(index_agent),
-        w_emission=False,
-        train_w_emission=False,
-        train_in_cat_task_from_scratch=False,
+        w_emission=True,
+        train_w_emission=True,
+        train_in_cat_task_from_scratch=True,
         entropy_reg=None
     )
 
