@@ -170,8 +170,8 @@ class Worker(torch.nn.Module):
                     emission_probs = torch.stack([1 - self.env.correct_weather[:, i_trial], self.env.correct_weather[:, i_trial]]).T
 
             # compute logalphas and logpredicts
-            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(y_t, z_t | c_t) = p(z_t | c_t) • p(y_t | z_t)
-            logpredicts[:, i_trial] = logpredict # p(z_t | c_t)
+            logalphas[:, i_trial] = logpredict + emission_probs.log() # p(y_t, z_t , c_t) = p(z_t , c_t) • p(y_t | z_t)
+            logpredicts[:, i_trial] = logpredict # p(z_t , c_t)
 
             # update RNN state if needed
             if update_state:
