@@ -31,6 +31,7 @@ class probabilistic_task:
         self.proba_emission_arm1 = torch.zeros([num_tasks, num_trials], dtype=float)
         self.p_gen = np.zeros([num_tasks, 201])
         self.mus = np.zeros([num_tasks])
+        self.sigmas = np.zeros([num_tasks])
         self.false_positive_feedback = np.zeros([num_tasks])
         stimulus_range = np.round(np.arange(-1.0, 1.01, 0.01), 2)
 
@@ -51,7 +52,7 @@ class probabilistic_task:
                 if taus[i] == 0 or len(switches) == 0:
                     uniq_probas = np.random.permutation(np.arange(2, 10, 2) * 0.1)
                     self.probas[i] = np.repeat(uniq_probas[None], num_trials, axis=0)
-            self.p_gen[i], self.mus[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(
+            self.p_gen[i], self.mus[i], self.sigmas[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(
                 false_positive_feedback=ffs[i] if ffs is not None else None,
                 mu=mus[i] if mus is not None else None
             )
