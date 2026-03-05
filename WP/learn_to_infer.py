@@ -10,7 +10,7 @@ from func_utils import compute_emission, compute_association
 
 class Worker(torch.nn.Module):
     def __init__(
-            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, w_emission=False, train_w_emission=False, train_in_cat_task_from_scratch=False, entropy_reg=None
+            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, w_emission=False, train_w_emission=False, train_in_cat_task_from_scratch=False, entropy_reg=None, nb_episodes_initial_models=None
         ):
         '''
         Args:
@@ -25,7 +25,7 @@ class Worker(torch.nn.Module):
             train_w_emission: Whether to train / finetune the emission and association models together given the presence of the bandit emission model.
             train_in_cat_task_from_scratch: Whether to train the association and emission models from scratch
             entropy_reg: The entropy regularization
-        '''
+        '''        
         super().__init__()
         if train_w_emission and not w_emission:
             raise ValueError("you must load the emission model if you want to train the association and emission modules with the emission model")
@@ -33,7 +33,7 @@ class Worker(torch.nn.Module):
             if train_w_emission is not True or w_emission is not True:
                 raise ValueError("If train_in_cat_task_from_scratch is True, both train_w_emission and w_emission must be True.")
         self.model_path = model_path
-        self.train_in_cat_task_from_scratch = train_in_cat_task_from_scratch
+        self.train_in_cat_task_from_scratch = train_in_cat_task_from_scratch        
         self.env = game
         self.episode_rewards = []
         self.init_type = init_type
@@ -41,6 +41,7 @@ class Worker(torch.nn.Module):
         self.entropy_reg = entropy_reg
         self.train_w_emission = train_w_emission
         self.w_emission = w_emission
+        self.nb_episodes_initial_models = nb_episodes_initial_models
         self.model_name = model_name + "_init_{0}_optim_{1}_episodeNbMax_{2}_numUnits_{3}_trainWithEmission_{4}".format(
             self.init_type, optimizer, int(self.episode_count_max), num_units, self.train_w_emission
         )
@@ -83,7 +84,9 @@ class Worker(torch.nn.Module):
             path_to_emission_networks = "../bandit/results/source/saved_models"
             name_of_emission_network = f"banditGRU_newinit_val_0_beta2_id{model_id}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_rnnType_GRU_inputType_logodds"
             files_to_load = sorted(glob.glob(path_to_emission_networks + "/" + name_of_emission_network + "/*"))            
-            number_of_iterations_of_emission_model = np.max([int(f.split('-')[-1].split('.')[0]) for f in files_to_load])
+            number_of_iterations_of_emission_model = (
+                self.nb_episodes_initial_models if self.nb_episodes_initial_models is not None else np.max([int(f.split('-')[-1].split('.')[0]) for f in files_to_load])
+            )
             idx_of_emission_model = np.argmax([int(f.split('-')[-1].split('.')[0]) == number_of_iterations_of_emission_model for f in files_to_load])
             state_dict_emission = torch.load(files_to_load[idx_of_emission_model])            
             for (key, val) in self.named_parameters():
@@ -107,7 +110,7 @@ class Worker(torch.nn.Module):
 
     def __post_init__(self):
         if (not self.train_in_cat_task_from_scratch) and self.w_emission:
-            self.load_model(trained_w_emission=False)
+            self.load_model(trained_w_emission=False, nb_episodes=self.nb_episodes_initial_models)
             print('loaded the association model')
 
     def evaluate(self, rnn_state_association=None, rnn_state_emission=None, update_state=True, use_probabilitistic_reward=False):
@@ -155,7 +158,6 @@ class Worker(torch.nn.Module):
                 (logpredict_0[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1),
                 (logpredict_1[np.arange(self.env.num_tasks)[:, None], contexts[:, i_trial]] * (contexts[:, i_trial] != -1)).sum(axis=-1)
             ]).squeeze().T # p(z_t, c_t) = p(z_t) • p(c_t | z_t)
-            #logpredict = logpredict - torch.logsumexp(logpredict, dim=-1, keepdims=True) # p(z_t | c_t) = p(z_t, c_t) / \sum_{z_t'} p(z_t', c_t)
 
             # compute emission probabilities if needed
             if self.w_emission and not use_probabilitistic_reward:
@@ -228,6 +230,8 @@ class Worker(torch.nn.Module):
             trained_w_emission = self.train_w_emission
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
         model_dir = f"{self.model_path}/{self.model_name}".replace('_trainWithEmission_True', f"_trainWithEmission_{trained_w_emission}")
+        if not trained_w_emission:
+            model_dir = model_dir.replace('_associationFinetunedOnly', f"")
         # load the model
         model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"
         state_dict = torch.load(model_file)
