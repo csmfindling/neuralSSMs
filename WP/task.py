@@ -78,10 +78,10 @@ class probabilistic_task:
         
         if variable_length:
             # sparse=False on server
-            one_hot_array = OneHotEncoder(max_categories=num_steps - 1, sparse=False).fit_transform(
-                np.random.randint(num_steps - 1, size=num_tasks_reshaped)[:, None]
+            one_hot_array = OneHotEncoder(max_categories=num_steps, sparse_output=False).fit_transform(
+                np.random.randint(num_steps, size=num_tasks_reshaped)[:, None]
             )
-            is_masked = np.hstack((np.zeros(num_tasks_reshaped)[:, None], one_hot_array.cumsum(axis=1)))
+            is_masked = np.hstack((np.zeros(num_tasks_reshaped)[:, None], one_hot_array.cumsum(axis=1)[:, :-1]))
         else:
             is_masked = np.zeros((num_tasks_reshaped, num_steps))
         
