@@ -10,7 +10,7 @@ from func_utils import compute_emission, compute_association
 
 class Worker(torch.nn.Module):
     def __init__(
-            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, w_emission=False, train_w_emission=False, train_in_cat_task_from_scratch=False, entropy_reg=None
+            self, game, model_path, model_name, num_units=32, init_type="xavier", optimizer="Adam", episode_count_max=5e4, w_emission=False, train_w_emission=False, train_in_cat_task_from_scratch=False, entropy_reg=None, associationFinetunedOnly=False
         ):
         '''
         Args:
@@ -32,6 +32,8 @@ class Worker(torch.nn.Module):
         if train_in_cat_task_from_scratch:
             if train_w_emission is not True or w_emission is not True:
                 raise ValueError("If train_in_cat_task_from_scratch is True, both train_w_emission and w_emission must be True.")
+        if associationFinetunedOnly and not train_w_emission:
+            raise ValueError("If associationFinetunedOnly is True, train_w_emission must be True.")
         self.model_path = model_path
         self.train_in_cat_task_from_scratch = train_in_cat_task_from_scratch
         self.env = game
@@ -47,6 +49,9 @@ class Worker(torch.nn.Module):
         self.model_name = self.model_name + f"_trainInCatTaskFromScratch_{train_in_cat_task_from_scratch}"
         if entropy_reg is not None:
             self.model_name = self.model_name + "_policyReg_{0}".format(str(entropy_reg).replace(".", "_"))
+        if associationFinetunedOnly:
+            self.model_name = self.model_name + "_associationFinetunedOnly"
+        self.associationFinetunedOnly = associationFinetunedOnly
 
         self.summary_writer = tensorboard.SummaryWriter("results/source/trainings_fullRNN/" + str(self.model_name))
         self.nb_units = num_units
@@ -96,9 +101,12 @@ class Worker(torch.nn.Module):
             self.optimizer = torch.optim.RMSprop(
                 list(self.gru_association.parameters()) + list(self.gru_emission.parameters()) + [self.W_output_association, self.W_output_emission], lr=1e-3
             )
-        else:            
+        else:
             if self.train_w_emission:
-                self.optimizer = torch.optim.RMSprop(list(self.gru_association.parameters()) + list(self.gru_emission.parameters()), lr=1e-4)
+                if self.associationFinetunedOnly:
+                    self.optimizer = torch.optim.RMSprop(list(self.gru_association.parameters()), lr=1e-4)
+                else:
+                    self.optimizer = torch.optim.RMSprop(list(self.gru_association.parameters()) + list(self.gru_emission.parameters()), lr=1e-4)
             else:
                 self.optimizer = torch.optim.RMSprop(
                     list(self.gru_association.parameters()) + [self.W_output_association], lr=1e-3
@@ -227,7 +235,7 @@ class Worker(torch.nn.Module):
         if trained_w_emission is None:
             trained_w_emission = self.train_w_emission
         nb_episodes = nb_episodes if nb_episodes is not None else self.episode_count_max
-        model_dir = f"{self.model_path}/{self.model_name}".replace('_trainWithEmission_True', f"_trainWithEmission_{trained_w_emission}")
+        model_dir = f"{self.model_path}/{self.model_name}".replace('_trainWithEmission_True', f"_trainWithEmission_{trained_w_emission}").replace('_associationFinetunedOnly', f"")
         # load the model
         model_file = f"{model_dir}/model-{int(nb_episodes)}.pth"
         state_dict = torch.load(model_file)
@@ -281,16 +289,16 @@ class Worker(torch.nn.Module):
             self.episode_rewards.append(correct)
 
             # Periodic evaluation and logging
-            if episode_count % 10 == 0 and episode_count != 0:
+            if episode_count % 10 == 0:
                 
                 # Save model checkpoint
-                if episode_count % 500 == 0:
+                if (episode_count % 500 == 0) or (episode_count == 0) or (episode_count < 1000 and episode_count % 100 == 0):
                     model_dir = f"{self.model_path}/{self.model_name}"
                     os.makedirs(model_dir, exist_ok=True)
                     model_file = f"{model_dir}/model-{episode_count}.pth"
                     torch.save(self.state_dict(), model_file)
                     print("Saved Model")
-                
+
                 # Log metrics
                 mean_reward = np.mean(self.episode_rewards[-10:])
                 
@@ -332,11 +340,11 @@ class Worker(torch.nn.Module):
 
 if __name__ == "__main__":
     try:
-        index = int(sys.argv[1])
+        index = int(sys.argv[1]) - 1
     except:
         index = 5
 
-    entropy_regs = [0.1, 0.3, 0.5, 1, 2, 4]
+    entropy_regs = [0, 0.1, 0.4, 0.7, 1, 2, 4, 8]
 
     index_agent = index % 30
     index_reg = index // 30
@@ -350,15 +358,18 @@ if __name__ == "__main__":
         "WP_GRU_agent{0}".format(index_agent),
         w_emission=True,
         train_w_emission=True,
-        train_in_cat_task_from_scratch=True,
-        entropy_reg=None
+        train_in_cat_task_from_scratch=False,
+        entropy_reg=None,
+        associationFinetunedOnly=False
     )
 
-    #self.load_model(trained_w_emission=False)
     self.train()
+
+    '''
     ffs = [0.1] * 500 + [0.3] * 500
     self.env.generate_test_task(num_tasks=1000, ffs=ffs, tau=0.05)
     result = self.evaluate(use_probabilitistic_reward=False)
     estimated_false_positive_rate = result['params_emission'][:, -1, :100].sum(axis=-1)
     print(estimated_false_positive_rate[:500].mean())
     print(estimated_false_positive_rate[500:].mean())
+    '''
