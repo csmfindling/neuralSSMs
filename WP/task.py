@@ -3,6 +3,71 @@ from sklearn.preprocessing import OneHotEncoder
 import torch
 from bandit.task import gaussian_false_positive_rate
 
+def truncated_exponential_logpdf(x, lambda_param, ub):
+    """
+    Compute the logpdf of an exponential distribution with rate lambda_param,
+    truncated to [0, ub].
+
+    Parameters
+    ----------
+    x : array_like
+        Points at which to evaluate the logpdf. Must be in [0, ub].
+    lambda_param : float
+        Rate parameter (lambda > 0) of the exponential.
+    ub : float
+        Upper bound of the truncation (must be > 0).
+
+    Returns
+    -------
+    logpdf : array_like
+        The log-probability density at x.
+    """
+    x = np.asarray(x)
+    # Set logpdf to -np.inf where x is outside [0, ub]
+    logpdf = np.full_like(x, -np.inf, dtype=np.float64)
+    if lambda_param <= 0 or (ub is not None and ub <= 0):
+        raise ValueError("lambda_param and ub must be positive.")
+    # Only compute logpdf for valid x in [0, ub]
+    if ub is not None:
+        Z = 1 - np.exp(-lambda_param * ub)  # normalization constant
+        mask = (x >= 0) & (x <= ub)
+    else:
+        mask = (x >= 0)
+        Z = 1
+    logpdf[mask] = np.log(lambda_param) - lambda_param * x[mask] - np.log(Z)
+    return logpdf
+
+def sample_truncated_exponential(size=1, lambda_param=1.0, ub=1.0, u=None):
+    """
+    Sample from an exponential distribution with rate lambda_param,
+    truncated to [0, ub].
+
+    Parameters
+    ----------
+    size : int or tuple of ints
+        Number of samples or shape of the returned samples.
+    lambda_param : float
+        Rate parameter (lambda > 0).
+    ub : float
+        Upper bound (must be > 0).
+
+    Returns
+    -------
+    samples : np.ndarray
+        Samples from the truncated exponential distribution.
+    """
+    if lambda_param <= 0 or (ub is not None and ub <= 0):
+        raise ValueError("lambda_param and ub must be positive.")
+    size = size if isinstance(size, tuple) else (size,)
+    if ub is None:
+        return np.random.exponential(1./lambda_param, size)
+    # Inverse transform sampling for truncated exponential
+    if u is None:
+        u = np.random.uniform(0, 1, size)
+    Z = 1 - np.exp(-lambda_param * ub)
+    samples = -np.log(1 - u * Z) / lambda_param
+    return samples
+
 
 class probabilistic_task:
     def __init__(self):
@@ -54,7 +119,8 @@ class probabilistic_task:
                     self.probas[i] = np.repeat(uniq_probas[None], num_trials, axis=0)
             self.p_gen[i], self.mus[i], self.sigmas[i], self.false_positive_feedback[i] = gaussian_false_positive_rate(
                 false_positive_feedback=ffs[i] if ffs is not None else None,
-                mu=mus[i] if mus is not None else None
+                mu=mus[i] if mus is not None else None,
+                upp_bound_ffb=0.3
             )
             self.idx_arm0[i] = np.random.choice(np.arange(len(stimulus_range)), p=self.p_gen[i], size=[num_trials], replace=True)
             self.feedback_arm0[i] = stimulus_range[self.idx_arm0[i]]

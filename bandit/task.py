@@ -94,24 +94,24 @@ def sample_truncated_exponential(size=1, lambda_param=1.0, ub=1.0, u=None):
     return samples
 
 
-def volatility_distribution(lambda_param=10):
+def volatility_distribution(lambda_param=10, upp_bound=0.4, low_bound=0):
     while True:
-        nu = np.random.exponential(1./lambda_param)
-        if nu < 0.4:
+        nu = np.random.exponential(1./lambda_param) + low_bound
+        if nu < upp_bound:
             break
     return nu
 
-def false_positive_rate_distribution(lambda_param=2):
+def false_positive_rate_distribution(lambda_param=2, upp_bound=0.4):
     while True:
-        false_positive_rate = np.random.exponential(1./lambda_param) + 0.01
-        if false_positive_rate < 0.4:
+        false_positive_rate = np.random.exponential(1./lambda_param)
+        if false_positive_rate < upp_bound:
             break
     return false_positive_rate
 
 
 def mu_distribution(lambda_param=3):
     while True:
-        mu = np.random.exponential(1./lambda_param) + 0.01
+        mu = np.random.exponential(1./lambda_param)
         if mu < 1.0:
             break
     return mu
@@ -132,7 +132,7 @@ def false_positive_rate(llrmax=None, return_stimulus_range=False):
     else:
         return p_gen, llrmax
 
-def gaussian_false_positive_rate(mu=None, false_positive_feedback=None, return_stimulus_range=False):
+def gaussian_false_positive_rate(mu=None, false_positive_feedback=None, return_stimulus_range=False, upp_bound_ffb=0.4):
     """
     Truncated N(mu, sigma^2) on [-1, 1].
     Chooses sigma so that P(X < 0 | X ∈ [-1,1]) = false_positive_feedback.
@@ -143,7 +143,7 @@ def gaussian_false_positive_rate(mu=None, false_positive_feedback=None, return_s
     if mu is None:
         mu = mu_distribution() #(np.random.rand() * 0.45 + 0.05)
     if false_positive_feedback is None:
-        false_positive_feedback = false_positive_rate_distribution()
+        false_positive_feedback = false_positive_rate_distribution(upp_bound=upp_bound_ffb)
 
     lo, hi = -1.0, 1.0
     p = float(false_positive_feedback)

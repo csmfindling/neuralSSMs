@@ -244,13 +244,14 @@ if __name__ == "__main__":
         "results/source/saved_models",
         "mastermindGRU_id{0}".format(index),
     )
-    self.train()
+    #self.train()
 
-    self.load_model(nb_episodes=8_000)
+    self.load_model()
     nb_tasks = 1000
     nus = [0] * 500 + [0.08] * 500
     ffbs = [0.2] * 1000
     self.env._generate_task_schedule(nb_tasks=nb_tasks, nus=nus, ffbs=ffbs)
+
     result = self.evaluate(use_ground_truth=False)
     print(result['params_transition'][:, -1][:500].mean())
     print(result['params_transition'][:, -1][500:].mean())

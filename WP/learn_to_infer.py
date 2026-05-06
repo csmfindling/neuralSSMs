@@ -362,8 +362,8 @@ if __name__ == "__main__":
         "WP_GRU_agent{0}".format(index_agent),
         w_emission=True,
         train_w_emission=True,
-        train_in_cat_task_from_scratch=False,
-        entropy_reg=None,
+        train_in_cat_task_from_scratch=True,
+        entropy_reg=entropy_regs[index_reg],
         associationFinetunedOnly=False
     )
 

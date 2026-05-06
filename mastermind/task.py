@@ -5,6 +5,72 @@ from scipy.stats import truncnorm
 from scipy.optimize import brentq
 import itertools
 
+def truncated_exponential_logpdf(x, lambda_param, ub):
+    """
+    Compute the logpdf of an exponential distribution with rate lambda_param,
+    truncated to [0, ub].
+
+    Parameters
+    ----------
+    x : array_like
+        Points at which to evaluate the logpdf. Must be in [0, ub].
+    lambda_param : float
+        Rate parameter (lambda > 0) of the exponential.
+    ub : float
+        Upper bound of the truncation (must be > 0).
+
+    Returns
+    -------
+    logpdf : array_like
+        The log-probability density at x.
+    """
+    x = np.asarray(x)
+    # Set logpdf to -np.inf where x is outside [0, ub]
+    logpdf = np.full_like(x, -np.inf, dtype=np.float64)
+    if lambda_param <= 0 or (ub is not None and ub <= 0):
+        raise ValueError("lambda_param and ub must be positive.")
+    # Only compute logpdf for valid x in [0, ub]
+    if ub is not None:
+        Z = 1 - np.exp(-lambda_param * ub)  # normalization constant
+        mask = (x >= 0) & (x <= ub)
+    else:
+        mask = (x >= 0)
+        Z = 1
+    logpdf[mask] = np.log(lambda_param) - lambda_param * x[mask] - np.log(Z)
+    return logpdf
+
+def sample_truncated_exponential(size=1, lambda_param=1.0, ub=1.0, u=None):
+    """
+    Sample from an exponential distribution with rate lambda_param,
+    truncated to [0, ub].
+
+    Parameters
+    ----------
+    size : int or tuple of ints
+        Number of samples or shape of the returned samples.
+    lambda_param : float
+        Rate parameter (lambda > 0).
+    ub : float
+        Upper bound (must be > 0).
+
+    Returns
+    -------
+    samples : np.ndarray
+        Samples from the truncated exponential distribution.
+    """
+    if lambda_param <= 0 or (ub is not None and ub <= 0):
+        raise ValueError("lambda_param and ub must be positive.")
+    size = size if isinstance(size, tuple) else (size,)
+    if ub is None:
+        return np.random.exponential(1./lambda_param, size)
+    # Inverse transform sampling for truncated exponential
+    if u is None:
+        u = np.random.uniform(0, 1, size)
+    Z = 1 - np.exp(-lambda_param * ub)
+    samples = -np.log(1 - u * Z) / lambda_param
+    return samples
+
+
 def false_positive_rate_distribution(lambda_param=2):
     while True:
         false_positive_rate = np.random.exponential(1./lambda_param)

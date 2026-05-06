@@ -146,7 +146,6 @@ class Worker(torch.nn.Module):
 
             # Update RNN state
             if update_state:
-                # update emission RNN state
                 logpredict_pfiltering = logpredict_transition if not KO_transition else logpredict_association
                 pfiltering = (logpredict_pfiltering - torch.logsumexp(logpredict_pfiltering, dim=-1, keepdims=True))
                 selected_pfiltering = ( 
@@ -164,7 +163,7 @@ class Worker(torch.nn.Module):
                 # update association RNN state
                 if not KO_WP:
                     p_gen = compute_emission(rnn_state_emission, self.W_output_emission)
-                    outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()
+                    outcomes = torch.tanh(torch.tensor([-p_gen[:, i_k, k].log() + p_gen[:, i_k, -k].log() for i_k, k in enumerate(self.env.idx_arm0[:, i_trial])])).detach()            
                     input_state = torch.vstack(
                         (                        
                             torch.vstack([outcomes]),
@@ -208,7 +207,7 @@ class Worker(torch.nn.Module):
             id_model = int(self.model_name.split('_')[3][2:])
 
             # association model        
-            model_WP = f"/Users/csmfindling/Documents/Postdoc-Geneva/neuralHMMs/code/WP/results/source/saved_models/WP_GRU_beta2_wo_Woutput_id{id_model}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_trainWithEmission_True"
+            model_WP = f"/Users/csmfindling/Documents/Postdoc-Geneva/neuralHMMs/code/WP/results/source/saved_models/WP_GRU_agent{id_model - 1}_init_xavier_optim_Adam_episodeNbMax_50000_numUnits_32_trainWithEmission_False_trainInCatTaskFromScratch_False"
             emission_model_WP = torch.load(model_WP + "/model-50000.pth")
 
             # transition and emission model
@@ -221,7 +220,7 @@ class Worker(torch.nn.Module):
                 elif "transition" in key:
                     value.data = transition_emission_model[key].data
                 elif "emission" in key:
-                    value.data = emission_model_WP[key].data
+                    value.data = transition_emission_model[key].data #transition_emission_model[key].data when trainWithEmission_True
                 else:
                     raise ValueError(f"Key {key} not found in association, transition or emission model")
 

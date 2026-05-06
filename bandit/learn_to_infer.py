@@ -105,13 +105,13 @@ class Worker(torch.nn.Module):
         for i_trial in range(self.env.n_trials):
             if self.env.agent_type == 'participant' and i_trial > 0:
                 if self.env.trlnum[i_trial] == 1 and i_trial > 0:
-                    log_alphas = torch.ones([self.env.n_tasks, self.env.n_arms]) * np.log(0.5)
-                    #rnn_state_transition = self.initial_rnn_transition.tile(1, nb_tasks, 1)
-                    #rnn_state_emission = self.initial_rnn_emission.tile(1, nb_tasks, 1)
-
+                    log_alphas = torch.ones([self.env.n_tasks, self.env.n_arms]) * np.log(0.5)                
+                    rnn_state_transition = self.initial_rnn_transition.tile(1, nb_tasks, 1)
+                    rnn_state_emission = self.initial_rnn_emission.tile(1, nb_tasks, 1)
+                    
             # compute volatility parameters
             if use_ground_truth:
-                vol = torch.clamp(torch.tensor([self.env.nu[:, i_trial]])[None, None].float(), 1e-7, 1 - 1e-7)
+                vol = torch.tensor(self.env.nu[i_trial])
                 logvol, log_1_minus_vol = vol.log(), torch.log1p(-vol)
             else:
                 logvol, log_1_minus_vol = compute_volatility(rnn_state_transition, self.W_output_transition, _return_exp=False)
@@ -135,8 +135,12 @@ class Worker(torch.nn.Module):
                     (selected_action == 0) * self.env.feedback_arm0[:, i_trial] + (selected_action == 1) * self.env.feedback_arm1[:, i_trial]
                 )
 
-                distorted_arm0 = stimfun(self.env.feedback_arm0[:, i_trial], self.participant_params['alpha'], self.participant_params['omega'])
-                distorted_arm1 = stimfun(self.env.feedback_arm1[:, i_trial], self.participant_params['alpha'], self.participant_params['omega'])
+                if self.participant_params is None:
+                    distorted_arm0 = self.env.feedback_arm0[:, i_trial]
+                    distorted_arm1 = self.env.feedback_arm1[:, i_trial]
+                else:
+                    distorted_arm0 = stimfun(self.env.feedback_arm0[:, i_trial], self.participant_params['alpha'], self.participant_params['omega'])
+                    distorted_arm1 = stimfun(self.env.feedback_arm1[:, i_trial], self.participant_params['alpha'], self.participant_params['omega'])
                 
                 if (self.env.stimulus_range[:, None] == distorted_arm0[None]).sum() != 1 or (self.env.stimulus_range[:, None] == distorted_arm1[None]).sum() != 1:
                     import ipdb; ipdb.set_trace()
@@ -238,11 +242,7 @@ class Worker(torch.nn.Module):
 
             # evaluate model
             result = self.evaluate()
-            proba_z_all_trials = (result["log_predict_probs_all_trials"] - torch.logsumexp(result["log_predict_probs_all_trials"], dim=-1, keepdims=True)).exp()
-            probabilities_feedback = (
-                proba_z_all_trials[:, :, 0] * torch.from_numpy(self.env.feedback_arm0).float()
-                + proba_z_all_trials[:, :, 1] * torch.from_numpy(self.env.feedback_arm1).float()
-            )
+            
             # slopes = get_slope(result["params_emission"]).mean(axis=1)
             # slope_loss = torch.relu(-probabilities_feedback.mean(axis=-1)).sum() * 1e6 # torch.relu(-slopes).mean() * 1e5
             slope_loss = torch.relu(result['params_emission'][:, :, :100].sum(axis=-1) - 0.5).sum() * 1e6
@@ -306,6 +306,12 @@ if __name__ == "__main__":
     except:
         index = 22
 
+    from learn_to_infer import Worker
+    import numpy as np
+    import torch
+    from task import SwitchingBandit
+    import time
+
     # newinit_val_0_1 -> Recinit -1 and Winit to 0.1, beta=2
     # newinit_val_1 -> Recinit -1 and Winit to 1, beta=2
     # newinit_val_0 -> Recinit 0 and Winit to 0, beta=2
@@ -331,11 +337,14 @@ if __name__ == "__main__":
     # newinit_val_0_beta3 -> Recinit -1 and Winit to 0, beta=4
     # newinit_val_0_beta3 -> Recinit -1 and Winit to 0, beta=5
 
-    self.train()
+    self.load_model()
     ffs = [0.05] * 500 + [0.3] * 500
 
     self.env.reset(nb_tasks=1000, ffs=ffs) #, mus=[0.1] * 1000)
+    start_time = time.time()
     result = self.evaluate(use_ground_truth=False)
+    end_time = time.time()
+    print(f"Time taken: {end_time - start_time} seconds")
     estimated_false_positive_rate = result['params_emission'][:, -1, :101].sum(axis=-1)
     print(estimated_false_positive_rate[:500].mean())
     print(estimated_false_positive_rate[500:].mean())
